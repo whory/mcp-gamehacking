@@ -774,6 +774,562 @@ server.tool(
 );
 
 // ============================================================
+// FIND SIMILAR
+// ============================================================
+
+server.tool(
+  "find_similar",
+  "Find projects similar to a given one based on topic and description overlap. Great for finding alternative implementations of the same technique.",
+  {
+    name: z.string().describe("Skill/project name to find similars for"),
+    limit: z.number().min(1).max(30).default(10),
+  },
+  async ({ name, limit }) => {
+    const idx = await getIndex();
+    const target = idx.get(name);
+    if (!target) return notFound("Skill", name);
+
+    const targetWords = new Set(target.searchText.split(/\s+/).filter((w) => w.length > 3));
+    const scored: Array<{ name: string; score: number; desc: string }> = [];
+
+    for (const [n, skill] of idx) {
+      if (n === name) continue;
+      let score = 0;
+      const words = skill.searchText.split(/\s+/);
+      for (const w of words) {
+        if (w.length > 3 && targetWords.has(w)) score++;
+      }
+      for (const t of target.topics) {
+        if (skill.topics.includes(t)) score += 3;
+      }
+      if (score > 0) scored.push({ name: n, score, desc: skill.description });
+    }
+
+    scored.sort((a, b) => b.score - a.score);
+    const top = scored.slice(0, limit);
+
+    if (!top.length) return err(`No similar projects found for "${name}".`);
+
+    return ok(`# Similar to: ${name}\n\n${target.description}\n\nFound ${scored.length} similar (top ${top.length}):\n\n${top.map((m) => `- **${m.name}** (overlap:${m.score}): ${m.desc}`).join("\n")}`);
+  }
+);
+
+// ============================================================
+// EXTRACT OFFSETS
+// ============================================================
+
+server.tool(
+  "extract_offsets",
+  "Parse a project's source code and extract all hex offsets (0x...) with surrounding context. Instant offset dump from any cheat.",
+  {
+    name: z.string().describe("Skill/project name"),
+    min_value: z.number().default(0x10).describe("Min offset value to include (filters noise like 0x0, 0x1)"),
+    limit: z.number().min(1).max(200).default(50).describe("Max offsets to return"),
+  },
+  async ({ name, min_value, limit }) => {
+    const src = await safeRead(join(DIRS.skills, name, "source.txt"));
+    if (!src) return err(`No source.txt for "${name}".`);
+
+    const regex = /\b(0x[0-9A-Fa-f]{2,8})\b/g;
+    const seen = new Map<string, string>();
+    const lines = src.split("\n");
+
+    for (let i = 0; i < lines.length && seen.size < limit; i++) {
+      let match;
+      while ((match = regex.exec(lines[i])) !== null) {
+        const val = match[1];
+        const num = parseInt(val, 16);
+        if (num >= min_value && !seen.has(val.toLowerCase())) {
+          seen.set(val.toLowerCase(), `L${i + 1}: ${lines[i].trim().slice(0, 150)}`);
+        }
+      }
+    }
+
+    if (!seen.size) return err(`No hex offsets found in "${name}".`);
+
+    let output = `# Offsets: ${name}\n\nExtracted ${seen.size} unique offsets:\n\n`;
+    for (const [offset, context] of seen) {
+      output += `- \`${offset}\` -- ${context}\n`;
+    }
+
+    return ok(output);
+  }
+);
+
+// ============================================================
+// SEARCH BY GAME / ENGINE
+// ============================================================
+
+server.tool(
+  "search_by_game",
+  "Find all skills/projects targeting a specific game. Searches name, description, topics, and games metadata.",
+  {
+    game: z.string().describe("Game name: cs2, valorant, fortnite, apex, pubg, rust, eft, r6, overwatch, genshin, roblox, minecraft, cod, league, dayz"),
+    has_source: z.boolean().optional(),
+    limit: z.number().min(1).max(200).default(30),
+  },
+  async ({ game, has_source, limit }) => {
+    const idx = await getIndex();
+    const kw = game.toLowerCase();
+    const aliases: Record<string, string[]> = {
+      cs2: ["cs2", "csgo", "counter-strike", "counterstrike", "cstrike"],
+      valorant: ["valorant", "vanguard", "riot"],
+      fortnite: ["fortnite", "fn", "fortnitegame"],
+      apex: ["apex", "apex-legends", "apexlegends"],
+      pubg: ["pubg", "playerunknown", "battlegrounds"],
+      rust: ["rust-game", "rustgame", "facepunch"],
+      eft: ["eft", "tarkov", "escape-from-tarkov"],
+      r6: ["r6", "rainbow-six", "siege", "rainbow6"],
+      overwatch: ["overwatch", "ow2"],
+      genshin: ["genshin", "hoyoverse", "mihoyo"],
+      roblox: ["roblox", "byfron"],
+      cod: ["cod", "call-of-duty", "warzone", "modern-warfare"],
+      league: ["league", "lol", "league-of-legends"],
+      dayz: ["dayz", "day-z"],
+      minecraft: ["minecraft", "mc-"],
+    };
+
+    const keywords = aliases[kw] ?? [kw];
+    const matches: Array<{ name: string; desc: string }> = [];
+
+    for (const [name, skill] of idx) {
+      if (has_source !== undefined && skill.hasSource !== has_source) continue;
+      if (keywords.some((k) => skill.searchText.includes(k))) {
+        matches.push({ name, desc: skill.description });
+        if (matches.length >= limit) break;
+      }
+    }
+
+    if (!matches.length) return err(`No projects found for game "${game}".`);
+
+    return ok(`# Game: ${game}\n\nFound ${matches.length} projects:\n\n${matches.map((m) => `- **${m.name}**: ${m.desc}`).join("\n")}`);
+  }
+);
+
+server.tool(
+  "search_by_engine",
+  "Find all skills/projects targeting a specific game engine.",
+  {
+    engine: z.string().describe("Engine: unreal, unity, source, cryengine, frostbite, godot, idtech"),
+    has_source: z.boolean().optional(),
+    limit: z.number().min(1).max(200).default(30),
+  },
+  async ({ engine, has_source, limit }) => {
+    const idx = await getIndex();
+    const kw = engine.toLowerCase();
+    const aliases: Record<string, string[]> = {
+      unreal: ["unreal", "ue4", "ue5", "uobject", "gobjects", "gnames", "processevent", "uworld"],
+      unity: ["unity", "il2cpp", "mono", "gameobject", "unityengine"],
+      source: ["source-engine", "source2", "valve", "netvar", "clientclass", "convar"],
+      cryengine: ["cryengine", "lumberyard"],
+      frostbite: ["frostbite", "dice"],
+      godot: ["godot"],
+      idtech: ["idtech", "id-tech", "quake"],
+    };
+
+    const keywords = aliases[kw] ?? [kw];
+    const matches: Array<{ name: string; desc: string }> = [];
+
+    for (const [name, skill] of idx) {
+      if (has_source !== undefined && skill.hasSource !== has_source) continue;
+      if (keywords.some((k) => skill.searchText.includes(k))) {
+        matches.push({ name, desc: skill.description });
+        if (matches.length >= limit) break;
+      }
+    }
+
+    if (!matches.length) return err(`No projects found for engine "${engine}".`);
+
+    return ok(`# Engine: ${engine}\n\nFound ${matches.length} projects:\n\n${matches.map((m) => `- **${m.name}**: ${m.desc}`).join("\n")}`);
+  }
+);
+
+// ============================================================
+// FILE TREE
+// ============================================================
+
+server.tool(
+  "get_file_tree",
+  "Parse a project's source.txt and show its file/directory tree structure (without file contents). Quick project structure overview.",
+  {
+    name: z.string().describe("Skill/project name"),
+    max_entries: z.number().min(10).max(500).default(100).describe("Max tree entries to show"),
+  },
+  async ({ name, max_entries }) => {
+    const src = await safeRead(join(DIRS.skills, name, "source.txt"));
+    if (!src) return err(`No source.txt for "${name}".`);
+
+    const filePathRegex = /^={3,}\s*(?:File|PATH):\s*(.+?)(?:\s*={3,})?$/gim;
+    const paths: string[] = [];
+    let match;
+
+    while ((match = filePathRegex.exec(src)) !== null) {
+      paths.push(match[1].trim());
+      if (paths.length >= max_entries) break;
+    }
+
+    if (!paths.length) {
+      const lineRegex = /^[-─]+\s*(.+\.[a-zA-Z]{1,5})\s*[-─]*$/gm;
+      while ((match = lineRegex.exec(src)) !== null) {
+        paths.push(match[1].trim());
+        if (paths.length >= max_entries) break;
+      }
+    }
+
+    if (!paths.length) {
+      const extRegex = /^(?:\/\/|#|;)\s*(?:file|path|source):\s*(.+)/gim;
+      while ((match = extRegex.exec(src)) !== null) {
+        paths.push(match[1].trim());
+        if (paths.length >= max_entries) break;
+      }
+    }
+
+    if (!paths.length) return err(`Could not extract file tree from "${name}". Source may not use standard file markers.`);
+
+    const dirs = new Set<string>();
+    for (const p of paths) {
+      const parts = p.split(/[/\\]/);
+      for (let i = 1; i < parts.length; i++) {
+        dirs.add(parts.slice(0, i).join("/"));
+      }
+    }
+
+    return ok(`# File Tree: ${name}\n\n${paths.length} files, ${dirs.size} directories:\n\n\`\`\`\n${paths.join("\n")}\n\`\`\``);
+  }
+);
+
+// ============================================================
+// FIND FUNCTION
+// ============================================================
+
+server.tool(
+  "find_function",
+  "Search for a function definition/declaration across all source archives. Matches C/C++ function signatures, class methods, NTSTATUS routines, etc.",
+  {
+    function_name: z.string().min(2).describe("Function name to find. Examples: 'DriverEntry', 'ProcessEvent', 'WorldToScreen', 'GetBoneMatrix'"),
+    max_results: z.number().min(1).max(30).default(10),
+  },
+  async ({ function_name, max_results }) => {
+    const idx = await getIndex();
+    const escaped = function_name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const regex = new RegExp(`(?:^|\\s|\\*|>)${escaped}\\s*\\(`, "i");
+
+    const results: Array<{ skill: string; matches: { line: number; text: string }[] }> = [];
+
+    for (const [name, skill] of idx) {
+      if (!skill.hasSource) continue;
+      const filePath = join(DIRS.skills, name, "source.txt");
+      const matches = await grepFile(filePath, regex, 3, 0);
+      if (matches.length > 0) {
+        results.push({ skill: name, matches });
+        if (results.length >= max_results) break;
+      }
+    }
+
+    if (!results.length) return err(`No definitions found for "${function_name}".`);
+
+    let output = `# Function: ${function_name}\n\nFound in ${results.length} projects:\n\n`;
+    for (const { skill, matches } of results) {
+      output += `### ${skill}\n`;
+      for (const m of matches) {
+        output += `  L${m.line}: ${m.text}\n`;
+      }
+      output += "\n";
+    }
+
+    return ok(output);
+  }
+);
+
+// ============================================================
+// EXPORT OFFSETS
+// ============================================================
+
+server.tool(
+  "export_offsets",
+  "Collect all hex offsets for a specific game across all skills and export as a C++ header. Aggregates offsets from every project targeting that game.",
+  {
+    game: z.string().describe("Game name: cs2, valorant, fortnite, apex, etc."),
+    max_projects: z.number().min(1).max(50).default(15).describe("Max projects to scan"),
+  },
+  async ({ game, max_projects }) => {
+    const idx = await getIndex();
+    const kw = game.toLowerCase();
+    const gameProjects: string[] = [];
+
+    for (const [name, skill] of idx) {
+      if (!skill.hasSource) continue;
+      if (skill.searchText.includes(kw)) {
+        gameProjects.push(name);
+        if (gameProjects.length >= max_projects) break;
+      }
+    }
+
+    if (!gameProjects.length) return err(`No projects with source code found for "${game}".`);
+
+    const allOffsets = new Map<string, { value: string; contexts: string[] }>();
+    const offsetRegex = /\b(\w+)\s*[=:]\s*(0x[0-9A-Fa-f]{3,8})\b/g;
+
+    for (const proj of gameProjects) {
+      const src = await safeRead(join(DIRS.skills, proj, "source.txt"));
+      if (!src) continue;
+      const lines = src.split("\n");
+      for (const line of lines) {
+        let match;
+        while ((match = offsetRegex.exec(line)) !== null) {
+          const name = match[1];
+          const value = match[2];
+          const key = `${name}=${value}`.toLowerCase();
+          if (!allOffsets.has(key)) {
+            allOffsets.set(key, { value: `${name} = ${value}`, contexts: [] });
+          }
+          const entry = allOffsets.get(key)!;
+          if (!entry.contexts.includes(proj)) entry.contexts.push(proj);
+        }
+      }
+    }
+
+    if (!allOffsets.size) return err(`No offsets extracted for "${game}" from ${gameProjects.length} projects.`);
+
+    const sorted = [...allOffsets.values()].sort((a, b) => b.contexts.length - a.contexts.length);
+
+    let header = `// ${game.toUpperCase()} offsets -- aggregated from ${gameProjects.length} projects\n`;
+    header += `// Generated by mcp-gamehacking\n`;
+    header += `// Offsets found in multiple projects are more likely current\n\n`;
+    header += `#pragma once\n\nnamespace ${game.replace(/[^a-zA-Z0-9]/g, "_")}_offsets {\n\n`;
+
+    for (const entry of sorted.slice(0, 100)) {
+      const refs = entry.contexts.length > 1 ? ` // found in ${entry.contexts.length} projects` : "";
+      header += `    constexpr auto ${entry.value};${refs}\n`;
+    }
+
+    header += `\n} // namespace ${game.replace(/[^a-zA-Z0-9]/g, "_")}_offsets\n`;
+
+    return ok(`# Exported Offsets: ${game}\n\nScanned ${gameProjects.length} projects, found ${allOffsets.size} unique offset assignments.\n\n\`\`\`cpp\n${header}\`\`\``);
+  }
+);
+
+// ============================================================
+// SKILL CHANGELOG (offset diff between two game projects)
+// ============================================================
+
+server.tool(
+  "skill_changelog",
+  "Compare offsets between two projects targeting the same game. Shows which offsets changed, were added, or removed. Useful for tracking game updates.",
+  {
+    project_old: z.string().describe("Older project name"),
+    project_new: z.string().describe("Newer project name"),
+  },
+  async ({ project_old, project_new }) => {
+    const extractOffsets = async (name: string): Promise<Map<string, string>> => {
+      const src = await safeRead(join(DIRS.skills, name, "source.txt"));
+      if (!src) return new Map();
+      const offsets = new Map<string, string>();
+      const regex = /\b(\w+)\s*[=:]\s*(0x[0-9A-Fa-f]{3,8})\b/g;
+      for (const line of src.split("\n")) {
+        let match;
+        while ((match = regex.exec(line)) !== null) {
+          offsets.set(match[1].toLowerCase(), match[2]);
+        }
+      }
+      return offsets;
+    };
+
+    const oldOff = await extractOffsets(project_old);
+    const newOff = await extractOffsets(project_new);
+
+    if (!oldOff.size && !newOff.size) return err(`No offsets found in either project.`);
+
+    const changed: string[] = [];
+    const added: string[] = [];
+    const removed: string[] = [];
+
+    for (const [name, val] of newOff) {
+      const oldVal = oldOff.get(name);
+      if (!oldVal) {
+        added.push(`+ ${name} = ${val}`);
+      } else if (oldVal !== val) {
+        changed.push(`~ ${name}: ${oldVal} -> ${val}`);
+      }
+    }
+
+    for (const [name, val] of oldOff) {
+      if (!newOff.has(name)) {
+        removed.push(`- ${name} = ${val}`);
+      }
+    }
+
+    let output = `# Offset Changelog: ${project_old} -> ${project_new}\n\n`;
+    output += `Old: ${oldOff.size} offsets | New: ${newOff.size} offsets\n\n`;
+
+    if (changed.length) output += `## Changed (${changed.length})\n\`\`\`\n${changed.join("\n")}\n\`\`\`\n\n`;
+    if (added.length) output += `## Added (${added.length})\n\`\`\`\n${added.join("\n")}\n\`\`\`\n\n`;
+    if (removed.length) output += `## Removed (${removed.length})\n\`\`\`\n${removed.join("\n")}\n\`\`\`\n\n`;
+
+    if (!changed.length && !added.length && !removed.length) output += "No offset differences found.\n";
+
+    return ok(output);
+  }
+);
+
+// ============================================================
+// ADDITIONAL NATIVE PROMPTS
+// ============================================================
+
+server.prompt(
+  "build-aimbot",
+  "Design an aimbot system for a specific game",
+  {
+    game: z.string().describe("Target game"),
+    type: z.string().optional().describe("Aimbot type: rage, legit, silent, psilent"),
+  },
+  async ({ game, type }) => ({
+    messages: [{
+      role: "user",
+      content: { type: "text", text: `# Aimbot Design: ${game}\nType: ${type ?? "legit + rage modes"}\n\nDesign a complete aimbot:\n1. Target selection (FOV circle, distance weight, visibility)\n2. Bone targeting (head/neck/chest, configurable)\n3. Aim smoothing (linear, bezier, humanized)\n4. Recoil compensation (pattern-based vs real-time read)\n5. Silent aim (server-side angle override)\n6. Backtracking (tick-based position history)\n7. Prediction (velocity extrapolation for moving targets)\n8. Trigger conditions (key hold, FOV threshold, visibility)\n9. Anti-detection (mouse input simulation, jitter, deadzone)\n10. Configuration (sensitivity, FOV, bone priority, smooth factor)` },
+    }],
+  })
+);
+
+server.prompt(
+  "build-triggerbot",
+  "Design a triggerbot with color/pixel or crosshair-based detection",
+  {
+    game: z.string().describe("Target game"),
+    method: z.string().optional().describe("Detection: color, crosshair, trace, memory"),
+  },
+  async ({ game, method }) => ({
+    messages: [{
+      role: "user",
+      content: { type: "text", text: `# Triggerbot Design: ${game}\nMethod: ${method ?? "color + memory hybrid"}\n\nDesign a triggerbot:\n1. Screen capture method (DXGI duplication, BitBlt, GPU readback)\n2. Target detection (HSV color range, crosshair entity ID, ray trace)\n3. FOV region (circular scan from center)\n4. Reaction delay (humanized random range)\n5. Cooldown between shots\n6. Bone filtering (head-only, body, any)\n7. Confidence threshold (pixel count ratio)\n8. Input method (SendInput, driver mouse, hardware mouse)\n9. Anti-detection (randomized delays, movement patterns)\n10. Performance (scan rate, threading model)` },
+    }],
+  })
+);
+
+server.prompt(
+  "write-injector",
+  "Design a DLL injector with specified injection technique",
+  {
+    technique: z.string().optional().describe("Injection: manual-map, reflective, apc, thread-hijack, efi"),
+  },
+  async ({ technique }) => ({
+    messages: [{
+      role: "user",
+      content: { type: "text", text: `# DLL Injector Design\nTechnique: ${technique ?? "manual map"}\n\nDesign a complete injector:\n1. Process discovery and handle acquisition\n2. PE parsing (headers, sections, imports, relocations, TLS)\n3. Memory allocation in target process\n4. Section mapping with correct protections\n5. Import resolution (LoadLibrary/GetProcAddress or manual)\n6. Relocation fixups (delta-based)\n7. TLS callback execution\n8. Entry point invocation (DllMain or custom)\n9. Header erasure and cleanup\n10. Exception handler registration\n11. Stealth considerations (no LoadLibrary trace, PEB cleanup)\n12. Error handling and rollback` },
+    }],
+  })
+);
+
+server.prompt(
+  "spoof-hardware",
+  "Design an HWID spoofing system",
+  {
+    target_ac: z.string().optional().describe("Anti-cheat to evade: battleye, eac, vanguard, ricochet"),
+  },
+  async ({ target_ac }) => ({
+    messages: [{
+      role: "user",
+      content: { type: "text", text: `# HWID Spoofing Design${target_ac ? `\nTarget AC: ${target_ac}` : ""}\n\nDesign a comprehensive HWID spoofer:\n1. Disk serial (SMART data, StorPort miniport hook, SCSI inquiry)\n2. NIC MAC address (NDIS filter driver, registry)\n3. SMBIOS/DMI (physical memory patch or EFI runtime)\n4. GPU serial (registry + driver IOCTL)\n5. Windows product ID / install ID (registry)\n6. TPM endorsement key\n7. Monitor EDID serial\n8. USB device serials\n9. CPU serial / CPUID\n10. Registry cleanup (past HWID traces)\n11. Persistence across reboots\n12. Detection vectors per anti-cheat${target_ac ? ` (focus on ${target_ac})` : ""}` },
+    }],
+  })
+);
+
+server.prompt(
+  "bypass-battleye",
+  "Research and design BattlEye bypass strategies",
+  {},
+  async () => {
+    const idx = await getIndex();
+    const relevant: string[] = [];
+    for (const [name, skill] of idx) {
+      if (skill.searchText.includes("battleye") || skill.searchText.includes("be_") || name.includes("battleye")) {
+        relevant.push(`- **${name}**: ${skill.description}`);
+        if (relevant.length >= 20) break;
+      }
+    }
+    return {
+      messages: [{
+        role: "user",
+        content: { type: "text", text: `# BattlEye Bypass Research\n\nProjects in library:\n${relevant.join("\n")}\n\nAnalyze BattlEye and provide bypass strategies:\n1. BEService/BEClient/BEDaisy architecture\n2. Kernel driver (BEDaisy.sys) detection methods\n3. User-mode module scanning and integrity checks\n4. Memory scanning patterns and timing\n5. Heartbeat/packet encryption\n6. Known bypass vectors (DMA, HV, EFI, driver)\n7. Detection timeline (what gets caught, when)\n8. Current recommended approach` },
+      }],
+    };
+  }
+);
+
+server.prompt(
+  "bypass-eac",
+  "Research and design Easy Anti-Cheat bypass strategies",
+  {},
+  async () => {
+    const idx = await getIndex();
+    const relevant: string[] = [];
+    for (const [name, skill] of idx) {
+      if (skill.searchText.includes("eac") || skill.searchText.includes("easy anti") || skill.searchText.includes("easyanticheat")) {
+        relevant.push(`- **${name}**: ${skill.description}`);
+        if (relevant.length >= 20) break;
+      }
+    }
+    return {
+      messages: [{
+        role: "user",
+        content: { type: "text", text: `# EAC Bypass Research\n\nProjects in library:\n${relevant.join("\n")}\n\nAnalyze Easy Anti-Cheat and provide bypass strategies:\n1. EAC architecture (service, driver, user-mode module)\n2. Kernel-level detection (driver verification, memory scanning)\n3. User-mode integrity checks (module whitelist, CRC)\n4. System call monitoring\n5. Hypervisor detection\n6. DMA detection improvements\n7. Known bypass vectors\n8. Current recommended approach` },
+      }],
+    };
+  }
+);
+
+server.prompt(
+  "bypass-vanguard",
+  "Research and design Vanguard (Valorant) bypass strategies",
+  {},
+  async () => {
+    const idx = await getIndex();
+    const relevant: string[] = [];
+    for (const [name, skill] of idx) {
+      if (skill.searchText.includes("vanguard") || skill.searchText.includes("vgk") || skill.searchText.includes("valorant")) {
+        relevant.push(`- **${name}**: ${skill.description}`);
+        if (relevant.length >= 20) break;
+      }
+    }
+    return {
+      messages: [{
+        role: "user",
+        content: { type: "text", text: `# Vanguard Bypass Research\n\nProjects in library:\n${relevant.join("\n")}\n\nAnalyze Riot Vanguard and provide bypass strategies:\n1. vgk.sys kernel driver architecture\n2. Boot-time loading and SecureBoot enforcement\n3. HWID collection and banning system\n4. Hypervisor detection methods\n5. DMA/FPGA detection\n6. UEFI NVRAM scanning\n7. Module integrity verification\n8. Known bypass vectors (HV, EFI, DMA)\n9. Current recommended approach` },
+      }],
+    };
+  }
+);
+
+server.prompt(
+  "implement-backtrack",
+  "Design a backtracking/lag compensation system",
+  {
+    game: z.string().describe("Target game"),
+    engine: z.string().optional().describe("Engine: unreal, source, unity"),
+  },
+  async ({ game, engine }) => ({
+    messages: [{
+      role: "user",
+      content: { type: "text", text: `# Backtracking System: ${game}${engine ? ` (${engine})` : ""}\n\nDesign a complete backtracking system:\n1. Tick/timestamp-based position recording\n2. Circular buffer per entity (configurable window: 50-200ms)\n3. Interpolation between recorded positions\n4. Best record selection (closest to crosshair or oldest valid)\n5. Latency compensation (local vs server tick delta)\n6. Integration with aimbot (bone position override)\n7. Choke cycle exploitation (if applicable)\n8. Visual representation (backtrack skeleton/ghost)\n9. Validity checks (max time window, distance sanity)\n10. Anti-detection (realistic tick manipulation)` },
+    }],
+  })
+);
+
+server.prompt(
+  "implement-autowall",
+  "Design a wall penetration calculation system",
+  {
+    game: z.string().describe("Target game"),
+  },
+  async ({ game }) => ({
+    messages: [{
+      role: "user",
+      content: { type: "text", text: `# Autowall System: ${game}\n\nDesign a wall penetration calculation system:\n1. Ray tracing from source to target\n2. Material/surface type detection (metal, wood, concrete, etc.)\n3. Penetration depth calculation per material\n4. Damage falloff through walls\n5. Multi-wall penetration (recursive trace)\n6. Weapon penetration power values\n7. Minimum damage threshold (configurable)\n8. Integration with aimbot (skip unpenetrable targets)\n9. Performance optimization (cache traces, limit depth)\n10. Visual feedback (penetration indicator, damage preview)` },
+    }],
+  })
+);
+
+// ============================================================
 // SKILL TOOLS -- direct access
 // ============================================================
 
