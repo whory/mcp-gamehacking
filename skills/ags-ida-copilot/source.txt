@@ -1,0 +1,1096 @@
+Project Path: arc_Antelcat_ida_copilot_gx2mktdn
+
+Source Tree:
+
+```txt
+arc_Antelcat_ida_copilot_gx2mktdn
+├── LICENSE
+├── ida_copilot
+│   ├── __init__.py
+│   ├── copilot.py
+│   ├── core.py
+│   ├── panel.py
+│   └── prompts.py
+├── ida_copilot.py
+├── img
+│   └── Preview.gif
+├── readme.md
+├── readme_cn.md
+└── requirements.txt
+
+```
+
+`LICENSE`:
+
+```
+MIT License
+
+Copyright (c) 2023 Antelcat
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+```
+
+`ida_copilot.py`:
+
+```py
+import ida_hexrays
+import ida_kernwin
+import idaapi
+
+from ida_copilot import panel
+from ida_copilot.copilot import Copilot
+
+
+class CopilotPluginActionHandler(idaapi.action_handler_t):
+    def __init__(self):
+        super(CopilotPluginActionHandler, self).__init__()
+
+    def activate(self, ctx):
+        ida_kernwin.show_wait_box('HIDECANCEL\nRunning Copilot...')
+        try:
+            Copilot().run()
+        finally:
+            ida_kernwin.hide_wait_box()
+            ida_hexrays.get_widget_vdui(ctx.widget).refresh_view(True)
+            ida_kernwin.refresh_idaview_anyway()
+
+
+    def on_task_complete(self, future):
+        # 关闭进度条或状态信息
+        ida_kernwin.hide_wait_box()
+
+        # 更新UI...
+        ida_kernwin.refresh_idaview_anyway()
+
+    def update(self, ctx):
+        return idaapi.AST_ENABLE_ALWAYS
+
+
+class CopilotPlugin(idaapi.plugin_t):
+    flags = idaapi.PLUGIN_UNL
+    comment = "Copilot"
+    help = "Copilot"
+    wanted_name = "Copilot"
+    wanted_hotkey = ""
+
+    def init(self):
+        if not ida_hexrays.init_hexrays_plugin():
+            print("Hex-Rays decompiler is not available!")
+            return
+
+        run_action = idaapi.action_desc_t(
+            'copilot:run',
+            'Run Copilot',
+            CopilotPluginActionHandler(),
+            'Ctrl+Shift+P',
+            '使用Copilot分析当前函数',
+            -1)
+        idaapi.register_action(run_action)
+        idaapi.attach_action_to_menu(
+            'Edit/Copilot',
+            'copilot:run',
+            idaapi.SETMENU_APP)
+
+        action_desc = idaapi.action_desc_t(
+            'copilot:show_panel',
+            'Show Copilot',
+            panel.ShowCopilotPanel(panel.CopilotPanel()),
+            None,
+            'Copilot integration',
+            0
+        )
+        idaapi.register_action(action_desc)
+
+        # 添加菜单项
+        idaapi.attach_action_to_menu(
+            'Windows/Copilot',
+            'copilot:show_panel',
+            idaapi.SETMENU_APP)
+
+        return idaapi.PLUGIN_KEEP
+
+    def run(self, arg):
+        idaapi.require('ida_copilot')
+        print('Copilot reloaded')
+
+    def term(self):
+        idaapi.detach_action_from_menu(
+            'Edit/Copilot',
+            'copilot:run')
+        idaapi.unregister_action('copilot:run')
+
+        idaapi.detach_action_from_menu(
+            'Windows/Copilot',
+            'copilot:show_panel')
+        idaapi.unregister_action('copilot:show_panel')
+
+
+def PLUGIN_ENTRY():
+    return CopilotPlugin()
+
+```
+
+`ida_copilot/copilot.py`:
+
+```py
+import asyncio
+import concurrent.futures
+import re
+from typing import Any, Optional
+
+from langchain.agents import tool, initialize_agent, AgentType
+from langchain.callbacks import FileCallbackHandler
+from langchain.callbacks.base import BaseCallbackManager
+from langchain.callbacks.manager import CallbackManagerForToolRun
+from langchain.chat_models import ChatOpenAI
+
+import idaapi
+from langchain.tools import BaseTool
+
+from ida_copilot import core, prompts
+
+
+class Copilot:
+    def run(self, temperature=0.2, model='gpt-3.5-turbo-0613'):
+        ea = idaapi.get_screen_ea()
+        func_name = idaapi.get_func_name(ea)
+
+        tools = [
+            self.__GetAddressInfoTool(),
+            self.__GetDefinitionTool(),
+            self.__GetPseudocodeTool(),
+            self.__SetFunctionCommentTool(),
+            self.__SetFunctionDefinitionTool(),
+            self.__SetFunctionNameTool(),
+            self.__GetIsMyWorkDoneTool(ea)
+        ]
+
+        agent = initialize_agent(
+            agent_type=AgentType.OPENAI_MULTI_FUNCTIONS,
+            llm=ChatOpenAI(temperature=temperature, model=model),
+            tools=tools,
+            # callback_manager=BaseCallbackManager(handlers=[
+            #     CopilotPanelCallbackManager()]),
+            verbose=True,
+        )
+
+        prompt = prompts.default_prompt_zh.format(
+            binary_description=f'name: {func_name}, address 0x{ea:x}'
+            # pseudocode=pseudocode
+        )
+
+        # 开启新线程运行agent
+        t = concurrent.futures.ThreadPoolExecutor()
+        loop = asyncio.get_event_loop()
+        loop.run_in_executor(t, agent.run, prompt)
+
+    class __GetAddressInfoTool(BaseTool):
+        name = 'get_address_info'
+        description = ('Given a hex address or function name, show its information. '
+                       '**Input Format**: `<hex_address_or_function_name>`. '
+                       '**Input Example1**: `sub_140007080`. '
+                       '**Input Example2**: `0x140007080`.')
+
+        @staticmethod
+        def __get_address_info(name_or_hex_address: str):
+            try:
+                if name_or_hex_address.lower().startswith('0x'):
+                    ea = int(name_or_hex_address, 16)
+                else:
+                    ea = idaapi.get_name_ea(idaapi.BADADDR, name_or_hex_address)
+                    if ea == idaapi.BADADDR:
+                        raise Exception
+            except Exception:
+                return f'{name_or_hex_address} is not a valid address or name.'
+
+            flags = idaapi.get_flags(ea)
+            result = ''
+
+            # 检查地址是否位于函数内部
+            func = idaapi.get_func(ea)
+            if func:
+                result += "Address 0x%X is inside a function.\n" % ea
+                result += "Function start: 0x%X\n" % func.start_ea
+                result += "Function end: 0x%X\n" % func.end_ea
+                func_name = idaapi.get_func_name(func.start_ea)
+                if func_name:
+                    result += "Function name: %s\n" % func_name
+            elif idaapi.is_code(flags):
+                result += "Address 0x%X is code.\n" % ea
+            elif idaapi.is_data(flags):
+                result += "Address 0x%X is data.\n" % ea
+                if idaapi.is_byte(flags):
+                    result += "Data type: Byte\n"
+                    result += "Value: %d\n" % idaapi.get_wide_byte(ea)
+                elif idaapi.is_word(flags):
+                    result += "Data type: Word\n"
+                    result += "Value: %d\n" % idaapi.get_wide_word(ea)
+                elif idaapi.is_dword(flags):
+                    result += "Data type: Dword\n"
+                    result += "Value: %d\n" % idaapi.get_wide_dword(ea)
+                elif idaapi.is_qword(flags):
+                    result += "Data type: Qword\n"
+                    result += "Value: %d\n" % idaapi.get_qword(ea)
+                elif idaapi.is_float(flags):
+                    result += "Data type: Float\n"
+                    # result += "Value: %f\n" % idaapi.get_wide_float(address)
+                elif idaapi.is_double(flags):
+                    result += "Data type: Double\n"
+                    # result += "Value: %f\n" % idaapi.get_wide_double(address)
+                elif idaapi.is_strlit(flags):
+                    result += "Data type: String\n"
+                    result += "Value: %s\n" % idaapi.get_strlit_contents(ea)
+                elif idaapi.is_struct(flags):
+                    result += "Data type: Struct\n"
+                # ... 其他数据类型检查
+            elif idaapi.is_unknown(flags):
+                result += "Address 0x%X is unknown.\n" % ea
+
+            # 名称和注释
+            if idaapi.has_name(flags):
+                result += "Name: %s\n" % idaapi.get_name(ea)
+            elif idaapi.has_dummy_name(flags):
+                result += "Dummy name: %s\n" % idaapi.get_name(ea)
+
+            if idaapi.has_cmt(flags):
+                result += "Comment: %s\n" % idaapi.get_cmt(ea, 0)
+
+            if result == '':
+                result = 'Address not found.'
+            elif result[-1] == '\n':
+                result = result[:-1]
+
+            return result
+
+        def _run(self, query: str, run_manager: Optional[CallbackManagerForToolRun] = None) -> Any:
+            query = core.escape_agent_input(
+                query, 'get_address_info')
+
+            return core.pop_async_call_result(
+                idaapi.execute_sync(
+                    lambda: core.push_async_call_result(self.__get_address_info(query)),
+                    idaapi.MFF_WRITE))
+
+    class __GetDefinitionTool(BaseTool):
+        name = 'get_definition'
+        description = ('Given a function name, show its definition. '
+                       'NOTICE that the result is decompiled by IDA, so it may NOT be accurate. '
+                       '**Input Format**: `<function_name>`. '
+                       '**Input Example**: `sub_140007080`.')
+
+        @staticmethod
+        def __get_definition(function_name: str):
+            try:
+                return core.decompile_by_name(function_name).definition
+            except Exception as e:
+                return f'Failed to decompile: {e}'
+            
+        def _run(self, query: str, run_manager: Optional[CallbackManagerForToolRun] = None) -> Any:
+            query = core.escape_agent_input(query, 'get_definition')
+
+            return core.pop_async_call_result(
+                idaapi.execute_sync(
+                    lambda: core.push_async_call_result(self.__get_definition(query)), 
+                    idaapi.MFF_WRITE))
+
+    class __GetPseudocodeTool(BaseTool):
+        name = 'get_pseudocode'
+        description = ('Given a function name or hex address of a function, show its pseudocode. '
+                       'NOTICE that the result is decompiled by IDA, so it may NOT be accurate. '
+                       '**Input Format**: `<function_name_or_hex_address>`. '
+                       '**Input Example1**: `sub_140007080`. '
+                       '**Input Example2**: `0x140007080`.')
+
+        @staticmethod
+        def __get_pseudocode(function_name_or_hex_address: str):
+            try:
+                if function_name_or_hex_address.lower().startswith('0x'):
+                    ea = int(function_name_or_hex_address, 16)
+                    return core.decompile_by_ea(ea).pseudocode
+
+                return core.decompile_by_name(function_name_or_hex_address).pseudocode
+            except Exception as e:
+                return f'Failed to decompile: {e}'
+
+        def _run(self, query: str, run_manager: Optional[CallbackManagerForToolRun] = None) -> Any:
+            query = core.escape_agent_input(
+                query, 'get_pseudocode')
+
+            return core.pop_async_call_result(
+                idaapi.execute_sync(
+                    lambda: core.push_async_call_result(self.__get_pseudocode(query)),
+                    idaapi.MFF_WRITE))
+
+    class __SetFunctionCommentTool(BaseTool):
+        name = 'set_function_comment'
+        description = ('Given a function name and a comment, set the comment of the function. '
+                       '**Input Format**: `<function_name> <comment>`. '
+                       '**Input Example**: `sub_140007080 Copilot Comment: This function is used to do something.`')
+
+        @staticmethod
+        def __set_function_comment(function_name_and_comment: str):
+            try:
+                func_name, comment = function_name_and_comment.split(' ', 1)
+                func_name = func_name.strip()
+
+                if not comment.startswith('Copilot Comment:'):
+                    comment = 'Copilot Comment: ' + comment.strip()
+                core.decompile_by_name(func_name).comment = comment
+
+                return f'Successfully set comment of {func_name} to {comment}.'
+            except Exception as e:
+                return f'Failed to set comment: {e}'
+
+        def _run(self, query: str, run_manager: Optional[CallbackManagerForToolRun] = None) -> Any:
+            query = core.escape_agent_input(
+                query, 'set_function_comment')
+
+            return core.pop_async_call_result(
+                idaapi.execute_sync(
+                    lambda: core.push_async_call_result(self.__set_function_comment(query)),
+                    idaapi.MFF_WRITE))
+
+    class __SetFunctionDefinitionTool(BaseTool):
+        name = 'set_function_definition'
+        description = ('Set definition of a function. '
+                       '**Input Format**: `<return_type> [calling_convention] <function_name>(<param_type> [param_name], ...)`. '
+                       '**Input Example1**: `void sub_140005048(int a1, unsigned long long a2)`. '
+                       '**Input Example2**: `NTSTATUS __fastcall DriverIoControl(PDRIVER_OBJECT, PIRP)`.')
+
+        @staticmethod
+        def __set_function_definition(new_definition: str):
+            func_pattern = re.compile(
+                r'(?P<ret_type>[\w\s*]+?)\s*(?P<cc>__\w+\s+)?(?P<func_name>\w+)\((?P<params>.*)\)')
+            # param_pattern = re.compile(r'(\w+\s*\*?)\s*(\w+)')
+
+            try:
+                match = func_pattern.match(new_definition)
+                if not match:
+                    return f'Invalid function definition, not match: {new_definition}'
+
+                result = match.groupdict()
+                return_type = result['ret_type'].strip() if result['ret_type'] else None
+                if not return_type:
+                    return f'Invalid function definition, no return type: {new_definition}'
+
+                # 上面的正则会漏掉一种情况
+                # 例如，`NTSTATUSsub_140005048(PDRIVER_OBJECT driverObject, PIRP irp)`
+                # 解析后，`ret_type`为`N`，`func_name`为`TSTATUSsub_140005048`
+                # 因此我们要把这种输入列为无效输入
+                if ' ' not in new_definition[:new_definition.index('(')]:
+                    return f'Invalid function definition, no func name: {new_definition}'
+
+                func_name = result['func_name'].strip()
+                core.decompile_by_name(func_name).definition = new_definition
+
+                return f'Successfully set definition of {func_name} to {new_definition}.'
+            except Exception as e:
+                return f'Failed to set definition: {e}'
+
+        def _run(self, query: str, run_manager: Optional[CallbackManagerForToolRun] = None) -> Any:
+            query = core.escape_agent_input(
+                query, 'set_function_definition')
+
+            return core.pop_async_call_result(
+                idaapi.execute_sync(
+                    lambda: core.push_async_call_result(self.__set_function_definition(query)),
+                    idaapi.MFF_WRITE))
+
+    class __SetFunctionNameTool(BaseTool):
+        name = 'set_function_name'
+        description = ('Given a function name, rename it. '
+                       '**Input Format**: <old_name> <new_name>. '
+                       '**Input Example**: sub_140007080 DeviceIoControl.')
+
+        @staticmethod
+        def __set_function_name(old_name_and_new_name: str):
+            try:
+                old_name, new_name = old_name_and_new_name.split(' ')
+                old_name = old_name.strip()
+                core.decompile_by_name(old_name).name = new_name
+
+                return f'Successfully renamed {old_name} to {new_name}.'
+            except Exception as e:
+                return f'Failed to set function name: {e}'
+
+        def _run(self, query: str, run_manager: Optional[CallbackManagerForToolRun] = None) -> Any:
+            return core.pop_async_call_result(
+                idaapi.execute_sync(
+                    lambda: core.push_async_call_result(self.__set_function_name(query)),
+                    idaapi.MFF_WRITE))
+
+    class __GetIsMyWorkDoneTool(BaseTool):
+        name = 'get_is_my_work_done'
+        description = ('Given a function name, return whether the work is done. '
+                       'Also return tips if not done.')
+        func: Optional[core.DecompiledFunction] = None
+
+        def __init__(self, current_func_ea, **kwargs: Any):
+            super().__init__(**kwargs)
+            self.func = core.decompile_by_ea(current_func_ea)
+
+        def __get_is_my_work_done(self):
+            try:
+                for function in self.func.functions:
+                    ea = function['ea']
+                    func_name = idaapi.get_func_name(ea)
+                    if func_name.startswith('sub_'):
+                        return (f'No, function `{func_name}` at 0x{ea:x} is not renamed yet. Please continue your work.'
+                                f'REMEMBER, your goal is to rename all functions that start with `sub_`.'
+                                f'AND, your are analyzing function `{self.func.name}`.')
+
+                return f'Yes, function `{self.func.name}` is fully analyzed.'
+
+            except Exception as e:
+                return f'Failed to get is my work done: {e}'
+
+        def _run(self, query: str, run_manager: Optional[CallbackManagerForToolRun] = None) -> Any:
+            return core.pop_async_call_result(
+                idaapi.execute_sync(
+                    lambda: core.push_async_call_result(self.__get_is_my_work_done()),
+                    idaapi.MFF_WRITE))
+
+```
+
+`ida_copilot/core.py`:
+
+```py
+import re
+
+import ida_kernwin
+import idautils
+from fuzzywuzzy import process
+from loguru import logger
+
+import ida_hexrays
+import idaapi
+
+async_call_index = 0
+async_call_stack = {}
+
+
+def push_async_call_result(result):
+    global async_call_index
+    global async_call_stack
+
+    async_call_stack[async_call_index] = result
+    async_call_index += 1
+    return async_call_index - 1
+
+
+def pop_async_call_result(index):
+    return async_call_stack.pop(index)
+
+
+def preprocess_prompt(template: str) -> str:
+    return re.sub(r'^[ \t]+', '', template, flags=re.MULTILINE).strip('\n')
+
+
+def escape_agent_input(query: str, tool_name: str) -> str:
+    """
+    有时候Agent会错误地在输入中包括工具名
+    比如应该输入`sub_140009000`，但是Agent会输入`tool_name('sub_140009000')`
+    """
+    logger.info(f'Escaping agent input: `{query}`')
+
+    try:
+        pattern = re.compile(rf'^{tool_name}\([\'"`](.+)[\'"`]\)$')
+        match = pattern.match(query)
+        if match:
+            logger.info(f'Escaped agent input: `{query}` -> `{match.group(1)}`')
+            return match.group(1)
+
+        return query
+    except Exception as e:
+        logger.error(f'Failed to escape agent input: `{query}`')
+        raise e
+
+
+def get_screen_func():
+    return idaapi.get_func(idaapi.get_screen_ea())
+
+
+def get_safe_new_name(new_func_name: str) -> str:
+    """
+    检查new_func_name是否已存在，如果存在，递增处理
+    :param new_func_name:
+    :return:
+    """
+    if new_func_name[0].isdigit():
+        new_func_name = 'fun_' + new_func_name
+
+    existed_ea = idaapi.get_name_ea(idaapi.BADADDR, new_func_name)
+    if existed_ea == idaapi.BADADDR:
+        return new_func_name
+
+    # 如果new_func_name最后有数字，递增处理
+    match = re.match(r'^(.*?)(\d+)$', new_func_name)
+    if match:
+        prefix, suffix = match.groups()
+        suffix = int(suffix)
+    else:
+        prefix = new_func_name
+        suffix = 1
+
+    while True:
+        new_func_name = f'{prefix}{suffix}'
+        existed_ea = idaapi.get_name_ea(idaapi.BADADDR, new_func_name)
+        if existed_ea == idaapi.BADADDR:
+            break
+        suffix += 1
+
+    return new_func_name
+
+
+# 用于记录修改过的函数
+# Copilot在一次分析的过程中并不会修改函数，而是记录下修改的内容，最后一次性修改。
+# key: ea
+# value: DecompiledFunction
+decompiled_functions = dict()
+
+renamed_functions = dict()
+"""
+记录重命名过的函数
+有时候Copilot已经把一个函数重命名过了，但是Copilot在之后可能还使用了旧的函数名，这时候还需要能找到新的函数名。
+WARN：只记录一次重命名。例如a -> b，那么现在根据a还能找到b。但如果又把c -> a，此时需要把a -> b删除。
+key: old_name
+value: new_name
+"""
+
+
+class DecompiledFunction:
+    __cfunc: ida_hexrays.cfuncptr_t  # 反编译得到的函数
+
+    def __init__(self, cfunc: ida_hexrays.cfuncptr_t):
+        self.__cfunc = cfunc
+        self.__refresh()
+
+    def __hash__(self):
+        return self.ea
+
+    def __str__(self):
+        return self.pseudocode
+
+    def __refresh(self):
+        self.__cfunc = idaapi.decompile(idaapi.get_func(self.ea), flags=ida_hexrays.DECOMP_NO_CACHE)
+        self.__fix_func_types()
+        self.__clean_up_local_variables()
+
+        vdui = ida_hexrays.get_widget_vdui(ida_kernwin.get_current_viewer())
+        if vdui:
+            vdui.refresh_view(True)
+
+    @property
+    def ea(self) -> int:
+        """函数地址"""
+        return self.__cfunc.entry_ea
+
+    @property
+    def comment(self) -> str:
+        """函数注释，例如`Copilot Comment: 这是一个函数`"""
+        return idaapi.get_func_cmt(self.ea, True)
+
+    @comment.setter
+    def comment(self, new_comment: str):
+        """设置函数注释"""
+        idaapi.set_func_cmt(idaapi.get_func(self.ea), new_comment.strip(), True)
+        self.__refresh()
+
+    @property
+    def name(self) -> str:
+        """函数名，例如`sub_140009000`"""
+        return idaapi.get_func_name(self.ea)
+
+    @name.setter
+    def name(self, new_name: str):
+        """设置函数名"""
+        new_name = new_name.strip()
+        if new_name == self.name:
+            raise Exception(f'`{new_name}` is same as current name')
+
+        if new_name.startswith('sub_'):
+            raise Exception(f'Function name should not start with `sub_`, which is a preserved name by IDA: `{new_name}`')
+
+        old_name = self.name
+
+        new_name = get_safe_new_name(new_name)
+        idaapi.set_name(self.ea, new_name, idaapi.SN_CHECK)
+        self.__refresh()
+
+        renamed_functions.pop(new_name, None)
+        renamed_functions[old_name] = new_name
+
+    @property
+    def definition(self) -> str:
+        """函数签名，例如`__int64 __fastcall sub_140009000(__int64 a1, IRP *a2)`"""
+        func_type = idaapi.tinfo_t()
+        self.__cfunc.get_func_type(func_type)
+        signature = str(func_type)  # signature不带函数名，需要加上
+        signature = signature.replace('(', f' {self.name}(', 1).replace('  ', ' ')
+        return signature
+
+    @definition.setter
+    def definition(self, new_signature: str):
+        tinfo = idaapi.tinfo_t()
+        idaapi.parse_decl(tinfo, None, new_signature + ';', idaapi.PT_TYP)
+        if str(tinfo) == '':
+            raise Exception(f'Invalid function definition, parse failed: `{new_signature}`')
+
+        func_data = idaapi.func_type_data_t()
+        if not tinfo.get_func_details(func_data):
+            raise Exception(f'Invalid function definition: `{new_signature}`')
+
+        original_tinfo = idaapi.tinfo_t()
+        idaapi.get_tinfo(original_tinfo, self.ea)
+        if str(original_tinfo) != '':
+            original_func_details = idaapi.func_type_data_t()
+            if original_tinfo.get_func_details(original_func_details):
+                func_data.flags = original_func_details.flags
+
+        tinfo.create_func(func_data)
+        if str(tinfo) == '':
+            raise Exception(f'Invalid function definition, create function type failed: {new_signature}')
+
+        idaapi.apply_tinfo(self.ea, tinfo, idaapi.TINFO_DEFINITE)
+        self.__refresh()
+
+    @property
+    def pseudocode(self) -> str:
+        """反编译得到的伪代码"""
+        return str(self.__cfunc)
+
+    def __fix_func_types(self):
+        """
+        Fix the types of the function decompiled by IDA.
+        根据当前反编译的函数调用参数类型修复目标函数签名。
+        """
+        logger.info(f'Fixing function types...{self.__cfunc.entry_ea:x}')
+
+        called_functions = self.functions
+        for func_info in called_functions:
+            args = func_info['args']
+            if len(args) == 0:
+                continue  # Skip functions without arguments
+
+            tinfo = func_info['tinfo']
+            if str(tinfo) == '':
+                continue  # Skip functions without signature
+
+            ea = func_info['ea']
+
+            # 修复函数签名
+            # 例如，IDA推断的函数为`__int64 __fastcall sub_140009000()`，
+            # 但是在反编译中，他被这样调用：
+            # NTSTATUS __stdcall DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
+            # {
+            #   sub_1400090BC();
+            #   return sub_140009000(DriverObject);
+            # }
+            # 这里的`sub_140009000`应该是`NTSTATUS __stdcall sub_140009000(PDRIVER_OBJECT DriverObject)`，
+            # 因此我们需要修复函数签名。
+
+            func_details = idaapi.func_type_data_t()
+            if not tinfo.get_func_details(func_details):
+                print(f'Failed to get function details of {ea:x}')
+                continue
+
+            new_func_details = idaapi.func_type_data_t()
+            new_func_details.rettype = func_details.rettype
+            new_func_details.cc = func_details.cc
+            new_func_details.flags = func_details.flags
+
+            for arg in args:
+                func_arg = idaapi.funcarg_t()
+                func_arg.type = arg.formal_type
+                new_func_details.push_back(func_arg)
+
+            new_tinfo = idaapi.tinfo_t()
+            new_tinfo.create_func(new_func_details)
+            logger.info(f'Fixing function type of 0x{ea:x}: {tinfo} -> {new_tinfo}')
+
+            idaapi.apply_tinfo(ea, new_tinfo, idaapi.TINFO_DEFINITE)
+
+    @staticmethod
+    def __type_to_var_name(tinfo: idaapi.tinfo_t):
+        """
+        将类型信息转换为变量名（小写下划线命名法）
+        """
+        name = tinfo.dstr()
+        parts = re.findall(r'[a-zA-Z0-9]+', name)
+
+        if parts[0] == 'struct':
+            parts = parts[1:]
+
+        if len(parts) == 0:
+            return 'v'
+
+        name = '_'.join(parts).lower()
+        if not name[0].isalpha():
+            name = "v_" + name
+        return name
+
+    class __FunctionCallCollector(ida_hexrays.ctree_visitor_t):
+        def __init__(self):
+            ida_hexrays.ctree_visitor_t.__init__(self, ida_hexrays.CV_FAST)
+            self.called_functions = []
+
+        def visit_expr(self, e):
+            if e.op == idaapi.cot_call:
+                func_ea = e.x.obj_ea
+                if func_ea != idaapi.BADADDR:
+                    tinfo = idaapi.tinfo_t()
+                    func_info = {'ea': func_ea, 'tinfo': tinfo, 'args': e.a}
+
+                    if not idaapi.get_tinfo(tinfo, func_ea) and not idaapi.guess_tinfo(tinfo, func_ea):
+                        # IDA无法推断函数签名，需要通过反编译获取
+                        func = idaapi.decompile(idaapi.get_func(func_ea), flags=ida_hexrays.DECOMP_NO_CACHE)
+                        func.get_func_type(tinfo)
+
+                    self.called_functions.append(func_info)
+
+            return 0  # Continue traversal
+
+    @property
+    def functions(self) -> list[dict]:
+        """
+        Get all called functions in the decompiled function.
+        :return: [{'ea': func_ea, 'tinfo': tinfo, 'args': e.a}]
+        """
+        collector = DecompiledFunction.__FunctionCallCollector()
+        collector.apply_to(self.__cfunc.body, None)
+        return collector.called_functions
+
+    def __clean_up_local_variables(self):
+        """
+        Clean up local variables in the decompiled function.
+        清理反编译函数中的局部变量。
+        包含函数参数中的变量，以及函数内部的局部变量。
+        清理前：
+        __int64 __fastcall sub_140007090(__int64 a1, IRP *a2)
+        {
+          __int64 v2; // r14
+          unsigned int v3; // ebx
+          struct _IO_STACK_LOCATION *v5; // rcx
+          struct _IRP *v6; // rsi
+          unsigned int v7; // edi
+          ULONG_PTR v8; // r15
+          unsigned int v9; // eax
+          HANDLE v10; // rax
+          HANDLE v11; // rax
+
+        清理后：
+        __int64 __fastcall sub_140007090(__int64 a1, IRP *irp)
+        {
+          __int64 v2; // r14
+            unsigned int v3; // ebx
+            struct _IO_STACK_LOCATION *io_stack_location0; // rcx
+            struct _IRP *irp0; // rsi
+            unsigned int v7; // edi
+            ULONG_PTR v8; // r15
+            unsigned int v9; // eax
+            HANDLE handle0; // rax
+            HANDLE handle1; // rax
+        """
+        lvars = self.__cfunc.get_lvars()
+        var_mapping = {}
+        used_names = set()
+
+        for lvar in lvars:
+            tinfo = lvar.type()
+            base_name = DecompiledFunction.__type_to_var_name(tinfo)
+            new_name = base_name
+            suffix = 1
+            while new_name in used_names:
+                new_name = f"{base_name}_{suffix}"
+                suffix += 1
+            used_names.add(new_name)
+            lvar.__name = new_name
+            var_mapping[lvar.__name] = new_name
+
+        # Update the cfunc
+        self.__cfunc.build_c_tree()
+
+
+def decompile_by_ea(ea: int) -> DecompiledFunction:
+    decompiled_function = decompiled_functions.get(ea)
+    if not decompiled_function:
+        func = idaapi.get_func(ea)
+        if not func:
+            raise Exception(f'0x{ea:x} is not a function.')
+
+        cfunc = idaapi.decompile(func, flags=ida_hexrays.DECOMP_NO_CACHE)
+        decompiled_function = decompiled_functions[ea] = DecompiledFunction(cfunc)
+
+    return decompiled_function
+
+
+def decompile_by_name(name: str) -> DecompiledFunction:
+    name = name.strip()
+    functions = {idaapi.get_func_name(ea).strip(): ea for ea in idautils.Functions()}
+    best_match = process.extractOne(name, functions.keys(), score_cutoff=50)
+    if best_match:
+        if best_match[0] == name:
+            return decompile_by_ea(functions[best_match[0]])
+
+        raise Exception(f'Function `{name}` not found. Did you mean `{best_match[0]}`?')
+
+    renamed_name = renamed_functions.get(name)
+    if renamed_name:
+        ea = functions.get(renamed_name)
+        if ea:
+            return decompile_by_ea(ea)
+
+    raise Exception(f'Function `{name}` not found.')
+
+```
+
+`ida_copilot/panel.py`:
+
+```py
+from typing import Optional
+
+import idaapi
+from PyQt5 import QtWidgets
+from langchain.callbacks.base import BaseCallbackHandler
+
+
+class Singleton(type):
+    _instances = {}
+
+    def __call__(cls, *args, **kwargs):
+        if cls not in cls._instances:
+            instance = super(Singleton, cls).__call__(*args, **kwargs)
+            cls._instances[cls] = instance
+        return cls._instances[cls]
+
+
+class CopilotPanel(idaapi.PluginForm, metaclass=Singleton):
+    def __init__(self):
+        super().__init__()
+        self.parent = None
+        self.text_edit: Optional[QtWidgets.QTextEdit] = None
+
+    def OnCreate(self, form):
+        self.parent = self.FormToPyQtWidget(form)
+        layout = QtWidgets.QVBoxLayout(self.parent)
+
+        self.text_edit = QtWidgets.QTextEdit()
+        layout.addWidget(self.text_edit)
+
+    def OnClose(self, form):
+        pass
+
+    def Show(self, **kwargs):
+        return idaapi.PluginForm.Show(self, "IDA Copilot", options=idaapi.PluginForm.WOPN_PERSIST)
+
+
+class CopilotPanelCallbackManager(BaseCallbackHandler):
+    def on_text(self, text: str, **kwargs):
+        panel = CopilotPanel()
+        if panel.text_edit:
+            panel.text_edit.append(text)
+
+
+class ShowCopilotPanel(idaapi.action_handler_t):
+    def __init__(self, panel):
+        idaapi.action_handler_t.__init__(self)
+        self.panel = panel
+
+    def activate(self, ctx):
+        self.panel.Show()
+
+    def update(self, ctx):
+        return idaapi.AST_ENABLE_ALWAYS
+
+```
+
+`ida_copilot/prompts.py`:
+
+```py
+from langchain.prompts import PromptTemplate
+
+default_prompt_zh = PromptTemplate(
+    input_variables=['binary_description'],
+    template="""
+你是Copilot，一个专业的逆向工程师，目前正在对一个二进制文件进行深入分析。你正在使用IDA Pro这个工具，观察到了一个特定函数的反编译伪代码。
+
+你的任务是对这段伪代码进行全面的分析，以便更好地理解其功能和逻辑。请按照以下指引进行工作：
+
+1. **函数作用分析**: 详细描述这个函数的功能和作用，并在函数上添加中文注释。请确保你的注释以Copilot Comment:为前缀，以便区分。
+2. **函数签名修正**: 根据你对代码逻辑的理解，推断并更正IDA Pro可能反编译错误或模糊的函数签名。请详细解释你做出这个决定的原因。
+3. **函数名称分析**: 深入分析当前函数以及它调用的所有相关函数的真实作用，对以`sub_`开头的函数进行重命名，并提供清晰的命名和解释。
+
+描述：
+{binary_description}
+
+**请不断进行你的分析工作，直到`get_is_my_work_done`告诉你工作已经完成为止。**
+""")
+
+```
+
+`readme.md`:
+
+```md
+# Copilot for IDA Pro
+
+### English | [中文](readme_cn.md)
+
+👋 Welcome to the ChatGPT plugin for IDA Pro, where the cutting-edge capabilities of OpenAI's GPT models meet the powerful disassembly and debugging features of IDA Pro. This plugin leverages LangChain and the latest Agent-based approach to automate the analysis of decompiled code in IDA, making reverse engineering easier and more interactive than ever.
+
+![Preview](https://github.com/Antelcat/ida_copilot/blob/main/img/Preview.gif?raw=true)
+
+## Features
+
+- 🤖 **Automatic Code Analysis**: Simply navigate to a function, run the plugin, and Copilot will automatically analyze it.
+- 🔍 **Contextual Function Information**: Get detailed information about functions, including definitions, pseudocode, and relevant comments.
+- ✏️ **Rename Functions**: AI will automatically analyze the function and rename it based on its functionality.
+- 🛠️ **Seamless Integration**: The plugin integrates smoothly with IDA Pro, adding menu actions for quick access and keyboard shortcuts for users.
+- ⏫ **Continuous Improvement**: Ongoing development promises the addition of new features and capabilities.
+
+## Getting Started
+
+### Prerequisites
+
+- IDA Pro with Hex-Rays Decompiler
+- Python >= 3.9 environment configured with IDAPython
+- An OpenAI API key, which should start with `sk-`. You can create one [here](https://platform.openai.com/account/api-keys) if you don't have one already.
+
+### Installation
+
+1. Clone the repository or download the source code zip package.
+2. Install required dependencies using `pip install -r requirements.txt`.
+3. Copy `ida_copilot` folder and `ida_copilot.py` file to the plugins directory of IDA Pro, similar to `C:\Program Files\IDA Pro 7.5\plugins`.
+4. Set up your OpenAI API key in the environment variable `OPENAI_API_KEY`.
+
+### Usage
+
+- Launch IDA Pro and load a binary file.
+- Navigate to a function you wish to analyze.
+- Click `Edit > Copilot` or Use the shortcut `Ctrl+Shift+P` to run the ChatGPT analysis.
+- Wait for the analysis to complete and the results to be displayed.
+
+## How It Works
+
+The core of this plugin operates on the innovative concept of an "Agent" framework, with ChatGPT serving as the **Brain** of this system. Imagine ChatGPT as an astute collaborator that discerns what needs to be done next within the IDA environment. This AI-driven agent continually makes decisions on the next course of action based on the current context and its understanding of the code.
+
+Through an array of Python APIs provided by the plugin, ChatGPT seamlessly interacts with IDA Pro. It harnesses these interfaces to analyze functions, rename variables, generate exploits, and even hold an interactive session with you, just like a human expert would. This continuous loop of analysis, decision-making, and interaction is what makes this plugin not just a tool, but a smart companion for your reverse-engineering challenges.
+
+## Development
+
+This plugin is under active development, with new features being added regularly. If you wish to contribute or have suggestions, please feel free to open an issue or a pull request on GitHub.
+
+### Features in Development
+- ✍️ **Rename Local Variables**: AI will automatically analyze the function and rename local variables based on their functionality.
+- 🎯 **Exploit Generation**: AI will automatically analyze the function and generate an exploit for it.
+- 💬 **Interactive Copilot**: Engage with the plugin in a conversational manner to ask questions or get clarifications about the code you're working on.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
+
+## Acknowledgements
+
+- This project utilizes OpenAI's GPT technology.
+- This project utilizes the LangChain library.
+- Thanks to the IDA Pro community for their continuous support and feedback.
+
+We hope this plugin empowers you to take your reverse engineering tasks to the next level with the power of AI!
+
+
+```
+
+`readme_cn.md`:
+
+```md
+# Copilot for IDA Pro
+
+### [English](readme.md) | 中文
+
+👋 欢迎使用IDA Pro的ChatGPT插件，它将ChatGPT模型的前沿能力与IDA Pro的强大反汇编功能相结合。利用最新基于Agent的方法自动化分析IDA反编译的代码，使逆向工程变得前所未有地简单。
+
+![预览](https://github.com/Antelcat/ida_copilot/blob/main/img/Preview.gif?raw=true)
+
+## 功能特点
+
+- 🤖 **自动代码分析**：只需导航到一个函数，启动插件，Copilot就会自动分析。
+- 🔍 **上下文功能信息**：获取关于函数的详细信息，包括定义、伪代码和相关注释。
+- ✏️ **函数重命名**：AI将自动分析该函数并根据其功能对其重命名。
+- 🛠️ **无缝集成**：插件与IDA Pro无缝集成，为快速访问添加菜单操作并为高级用户提供键盘快捷方式。
+- ⏫ **持续改进**：新功能和新能力正在紧张开发中。
+
+## 入门
+
+### 先决条件
+
+- 带有Hex-Rays Decompiler的IDA Pro。
+- IDAPython环境，Python >= 3.9。
+- 一个OpenAI API密钥，它应该以`sk-`开头。如果您还没有，可以在[这里](https://platform.openai.com/account/api-keys)创建一个。
+
+### 安装
+
+1. 克隆存储库或下载项目的源代码zip包。
+2. 使用`pip install -r requirements.txt`安装所需的依赖项。
+3. 将`ida_copilot`文件夹和`ida_copilot.py`文件复制到IDA Pro的插件目录中，类似于`C:\Program Files\IDA Pro 7.5\plugins`。
+4. 在环境变量`OPENAI_API_KEY`中设置您的OpenAI API密钥。
+
+### 使用
+
+- 启动IDA Pro并加载一个二进制文件。
+- 导航到您希望分析的函数。
+- 点击`Edit > Copilot`或使用快捷键`Ctrl+Shift+P`运行ChatGPT分析。
+- 等待分析完成并显示结果。
+
+## 工作原理
+
+这个插件的核心是基于一个创新的"Agent"框架，ChatGPT在此系统中充当**大脑**。将ChatGPT想象为一个精明的合作伙伴，它能够辨别出IDA环境中接下来需要做什么。这个由AI驱动的代理根据当前的上下文及其对代码的理解，不断地做出下一步行动的决策。
+
+通过插件提供的一系列Python API，ChatGPT与IDA Pro无缝交互。它利用这些接口来分析函数，重命名变量，生成漏洞利用代码，甚至就像一个人类专家一样与您进行交互式会话。这种持续的分析、决策和互动循环，使这个插件不仅仅是一个工具，更是您逆向工程挑战中的智能副驾驶。
+
+## 开发
+
+这个插件正在积极开发中，定期添加新功能。如果您有建议或想贡献代码，请随时在GitHub上开issue或PR。
+
+### 开发中的功能
+- ✍️ **局部变量重命名**：AI将自动分析函数并根据其功能重命名局部变量。
+- 🎯 **漏洞利用生成**：AI将自动分析函数并为其生成漏洞利用代码。
+- 💬 **交互式Copilot**：以对话方式与插件互动，对您正在处理的代码提问或获取澄清。
+
+## 许可证
+
+该项目使用[MIT许可证](LICENSE)。
+
+## 致谢
+
+- 该项目使用了OpenAI的GPT技术。
+- 该项目利用了LangChain库。
+- 感谢IDA Pro社区的持续支持和反馈。
+
+我们希望这个插件能够帮助您利用AI的力量将您的逆向工程提升到一个新的水平！
+
+```
+
+`requirements.txt`:
+
+```txt
+langchain~=0.0.327
+pydantic~=2.4.2
+openai~=0.28.1
+loguru~=0.7.2
+```
