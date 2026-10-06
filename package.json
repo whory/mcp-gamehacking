@@ -1,0 +1,47 @@
+{
+  "name": "mcp-gamehacking",
+  "version": "2.0.0",
+  "description": "MCP server for game hacking & reverse engineering — 4,100+ skills, 75 agents, 161 subagents, 114 plugins, 148 prompts",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "inspect": "npx @modelcontextprotocol/inspector node dist/index.js"
+  },
+  "keywords": [
+    "mcp",
+    "game-hacking",
+    "reverse-engineering",
+    "cheat-development",
+    "anti-cheat",
+    "kernel-driver",
+    "hypervisor",
+    "esp",
+    "aimbot",
+    "injection",
+    "hooking"
+  ],
+  "author": "whory",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/whory/mcp-gamehacking.git"
+  },
+  "homepage": "https://github.com/whory/mcp-gamehacking#readme",
+  "bugs": {
+    "url": "https://github.com/whory/mcp-gamehacking/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "tsx": "^4.19.0",
+    "@types/node": "^22.0.0"
+  }
+}
