@@ -1,0 +1,481 @@
+Project Path: arc_2601677867_One-Click-Run_Source_Server_pbpwk8sx
+
+Source Tree:
+
+```txt
+arc_2601677867_One-Click-Run_Source_Server_pbpwk8sx
+├── README(EN).md
+├── README.md
+└── one_click_run.sh
+
+```
+
+`README(EN).md`:
+
+```md
+# One-Click-Run_Source_Server 
+Quickly Download Source game server And Sourcemod/Metamod:Source on your Linux
+## What's this?🤷‍♀️
+This script allows you to quickly download the origin game server files to your Linux（Debian,Ubuntu,Redhat,etc...） without having to manually install Steamcmd and other files yourself👍👍👍
+
+
+## Supported Distro
+
+| Name  | Support| Test|
+| ---------- | -----------|---------- |
+| Ubuntu     | 😁 | 😁 |     
+| CentOS7    | 😁 | 😁 |  
+| Debian     | 😁 | 🙄 |  
+| RHEL Server| 😁 | 🙄 | 
+| Aliyun     | 😁 | 🙄 |  
+| Fedora     | 😁 | 🙄 | 
+| Raspbian   | 😁 | 🙄 |  
+| Arch       | 🤬 | 😡 |  
+
+
+
+## How To Use
+
+You can download the script to your server through the git. After you type the sudo command, the system may ask you to enter the password. It is strongly recommended to execute this script as the root account<br> 
+
+```bash
+sudo yum install git -y 
+git clone https://github.com/2601677867/One-Click-Run_Source_Server.git
+```
+Or
+```bash
+sudo apt-get install git
+git clone https://github.com/2601677867/One-Click-Run_Source_Server.git
+```
+Then you will find the One-Click-Run_Source_Server folder in your current directory, then please
+```bash
+cd One-Click-Run_Source_Server/
+sudo chmod 777 one-click-run.sh
+./one-click-run.sh
+```
+
+## Error Resolution
+
+```bash
+E: Could not open lock file /var/lib/dpkg/lock-frontend - open (13: Permission denied)
+E: Unable to acquire the dpkg frontend lock (/var/lib/dpkg/lock-frontend), are you root?
+```
+Please run this script with root privileges
+
+```bash
+Error! Falied to install app 'xxxxx' (No subscription)
+```
+The Steam Appid entered  wrong, please visit[ValveDeveloper Community-Steam Application IDs](https://developer.valvesoftware.com/wiki/Steam_Application_IDs) To find the correct Appid on the game server
+
+```bash
+xxxxxx 0x202/204 Error xxxxxx
+```
+The remaining space of your server hard disk is not enough to download the game server, please change the installation path or add/expand the hard disk
+
+## Change Log
+
+### v1.5
+- Added support for the game insurgency
+- Added skip script with built-in system detection, mandatory deployment mode
+- 优化排版
+
+### v1.0 
+- initial version
+
+
+
+## Q&A
+Q:你的联系方式/如何联系到你？如何提交脚本BUG？<br> 
+A:提交反馈BUG请在issue上提交，我的个人网站[一纸荒年Trace's Blog](https://www.wtrace3zh.today) 
+
+Q:脚本会不会危害我的服务器/你有没有往里面添加恶意代码来恶心不懂Linux的萌新？<br> 
+A:脚本是开源的，这意味着所有人都能看到全部源代码，如果我往里面添加恶心的东西的话应该早会被其他人发现举报封库，然后在起源圈疯狂批斗我的恶行。且我也没有任何理由要添加恶意代码，当然如果你要从非Github页面下载脚本的话我不保证有人会进行恶意二次修改。
+
+Q:部署完后应该干什么<br> 
+A:写server.cfg，跑起服务器，去学Sourcemod，骚年，起源人的噩梦才刚刚开始(或者去我的博客看看后续教程).
+
+Q:你脚本写的这么垃圾还敢拿出来秀？你的shell是Windows任务管理器教的吧！<br> 
+A:首先我承认我的shell编程能力很低，而且我也不是什么起源圈的dalao级人物，我只是一个前CS起源社区服腐竹而已，我做这个脚本的目的是方便想建服的萌新和厌烦了steamcmd的大佬们快速部署服务端，我也没有任何想展示我的能力的意思，总之，这个shell菜鸡写的脚本，堪称精神污染级编程方式与思维，但是能完美工作！大佬们不喜勿喷
+
+```
+
+`README.md`:
+
+```md
+# One-Click-Run_Source_Server 一键部署起源服务端 
+一键在您的服务器上部署Source引擎游戏服务端（支持CSGO，L4D2，TF2，CSS等热门游戏）
+
+## !!本项目将不在继续维护和更新!!
+* 为什么？<br> 
+由于Shell 脚本的局限性，一键部署起源服务端脚本无法发展至一个多功能，易使用和更快速部署游戏服务端的工具，荒年深知V社设计的Steamcmd有多么的反人类式不便捷以及全英文对新手腐竹的不友好。<br> 
+<br> 所以荒年决定以一键部署起源服务端为蓝本，使用Python制作一个更棒的游戏服务端快速部署工具：SteamCMD++ <br> 
+<br> SteamCMD++不仅支持部署Source引擎游戏服务器，其他热门游戏服务器；例如7 days to Die 七日杀 ARK: Survival Evolved 方舟进化生存 Unturned 未转变者 与 Terraria 泰拉瑞亚等热门游戏服务端与插件系统等<br>
+
+* 这意味着什么？<br>
+这意味着我将不会在更新One-Click-Run_Source_Server，而是投入全部精力到SteamCMD++的开发中去。<br>
+<br> 但您仍可以按照本项目的使用方法使用此脚本，只是当遇到任何BUG和错误时我将不会提供任何解决方案和反馈<br>
+
+* 设想不错！我在哪可以看到SteamCMD++的最新进展？<br>
+请访问我的个人博客[一纸荒年Trace's Blog](https://www.wtrace3zh.com) 来获得关于SteamCMD++的最新进展。<br>
+<br> 如果你对SteamCMD++又任何好想法或懂得Python且原因帮助这个开源项目开发，欢迎添加我的QQ:260167767（备注Steamcmd++）来与我商讨
+
+## 这是什么？🤷‍♀️
+这是一款可以让您在Linux主流发行版（Debian，Ubuntu，Centos7等）服务器上快速部署起源引擎游戏服务端，而不必亲自动手安装SteamCmd等服务端运行环境👍👍👍
+
+* 对于建服新手<br> 
+它可以帮助您快速入门起源服务器，而不必去执行繁琐复杂的SteamCMD与游戏服务端的安装步骤与学习复杂的Linux系统操作知识，直接深入到Sourcemod与服务器管理的学习中。
+* 对于dalao们<br> 
+厌倦了复制粘贴，解压与wget？用脚本一键部署Steamcmd与SM和MM，还有游戏服务端，省时又省力！
+
+## 系统支援情况
+
+| 发行版  | 支持| 测试|
+| ---------- | -----------|---------- |
+| Ubuntu     | 😁 | 😁 |     
+| CentOS7    | 😁 | 😁 |  
+| Debian     | 😁 | 🙄 |  
+| RHEL Server| 😁 | 🙄 | 
+| Aliyun     | 😁 | 🙄 |  
+| Fedora     | 😁 | 🙄 | 
+| Raspbian   | 😁 | 🙄 |  
+| Arch       | 🤬 | 😡 |  
+| WSL(Only 2)| 😁 | 😁 |
+
+
+## 食用教程
+> 对于大佬们，记得使用root账户或者有权限能运行yum/apt命令的情况下执行脚本即可<br> 
+
+您可以通过git克隆方法将脚本下载到您的服务器上，在您键入sudo命令后，系统可能会要求您输入密码，强烈建议以root账户执行本脚本<br> 
+
+```bash
+sudo yum install git -y ###仅限Redhat系Linux发行版
+git clone https://github.com/2601677867/One-Click-Run_Source_Server.git
+```
+对于Debian系发行版系统
+```bash
+sudo apt-get install git
+git clone https://github.com/2601677867/One-Click-Run_Source_Server.git
+```
+随后您会在您的当前目录中找到One-Click-Run_Source_Server文件夹，随后请
+```bash
+cd One-Click-Run_Source_Server/
+sudo chmod 777 one_click_run.sh
+./one-click-run.sh
+```
+随后请按照脚本中文提示操作
+
+## 报错处理
+
+```bash
+E: Could not open lock file /var/lib/dpkg/lock-frontend - open (13: Permission denied)
+E: Unable to acquire the dpkg frontend lock (/var/lib/dpkg/lock-frontend), are you root?
+```
+请以root用户或在执行脚本前加上sudo，如果sudo不奏效请以root用户启动脚本，方法自行百度Google
+
+```bash
+Error! Falied to install app 'xxxxx' (No subscription)
+```
+输入的Steam Appid错误，请访问[ValveDeveloper Community-Steam Application IDs](https://developer.valvesoftware.com/wiki/Steam_Application_IDs) 来寻找游戏服务端正确Appid
+
+```bash
+xxxxxx 0x202/204 Error xxxxxx
+```
+你的服务器硬盘容量已经不足以下载游戏服务端，请更改安装路径或添加/扩容硬盘
+
+## 更新日志
+
+### 2021年8月27日更新 v2.1
+- 更换国内Steamcmd镜像源
+- 增加对WSL用户的警示以及使用说明
+
+### 2021年5月13日更新 v2.0
+- 重写全部代码，修复v1.x版本特殊情况无法部署的BUG
+- 增加国内服务器加速下载Steamcmd功能
+- 优化排版
+
+### 2021年3月5日更新 v1.6
+- 增加系统运行环境检查功能，避免服务器出现缺少脚本所需命令
+- 优化排版
+
+### 2020年11月20日更新 v1.5
+- 添加了对游戏《叛乱insurgency》的支持
+- 添加了跳过脚本自带系统检测，强制部署模式
+- 优化排版
+
+### 2020年11月7日更新 v1.0 
+- 初始版本
+
+
+
+## Q&A
+Q:你的联系方式/如何联系到你？如何提交脚本BUG？<br> 
+A:提交反馈BUG请在issue上提交，我的个人网站[一纸荒年Trace's Blog](https://www.wtrace3zh.com) 
+
+Q:脚本会不会危害我的服务器/你有没有往里面添加恶意代码来恶心不懂Linux的萌新？<br> 
+A:脚本是开源的，这意味着所有人都能看到全部源代码，且我也没有任何理由要添加恶意代码，当然如果你要从非Github页面下载脚本的话我不保证有人会进行恶意二次修改。
+
+Q:部署完后应该干什么<br> 
+A:写server.cfg，跑起服务器，去学Sourcemod，骚年，起源人的噩梦才刚刚开始(或者去我的博客看看后续教程).
+
+```
+
+`one_click_run.sh`:
+
+```sh
+#!/bin/bash
+
+RED_COLOR='\E[1;31m'
+RES='\E[0m'
+
+Get_Dist_Name(){
+    if grep -Eqii "CentOS" /etc/issue || grep -Eq "CentOS" /etc/*-release; then
+        DISTRO='Redhat'
+        PM='yum'
+    elif grep -Eqi "Red Hat Enterprise Linux Server" /etc/issue || grep -Eq "Red Hat Enterprise Linux Server" /etc/*-release; then
+        DISTRO='Redhat'
+        PM='yum'
+    elif grep -Eqi "Aliyun" /etc/issue || grep -Eq "Aliyun" /etc/*-release; then
+        DISTRO='Redhat'
+        PM='yum'
+    elif grep -Eqi "Fedora" /etc/issue || grep -Eq "Fedora" /etc/*-release; then
+        DISTRO='Redhat'
+        PM='yum'
+    elif grep -Eqi "Debian" /etc/issue || grep -Eq "Debian" /etc/*-release; then
+        DISTRO='Debian'
+        PM='apt'
+    elif grep -Eqi "Ubuntu" /etc/issue || grep -Eq "Ubuntu" /etc/*-release; then
+        DISTRO='Debian'
+        PM='apt'
+    elif grep -Eqi "Raspbian" /etc/issue || grep -Eq "Raspbian" /etc/*-release; then
+        DISTRO='Debian'
+        PM='apt'
+    else
+        DISTRO='unknow'
+    fi
+}
+
+System_check(){
+	echo "运行系统及运行环境检查"
+	Get_Dist_Name
+	
+if [ $DISTRO = "Debian" ];then
+	echo "正在安装服务端程序必备运行库，请确保您拥有高级权限或以root用户运行此脚本"
+	sleep 5
+	apt update -y
+	apt upgrade -y
+	apt-get install lib32stdc++6 -y
+    apt-get install lib32gcc1 -y
+	apt-get install screen -y
+	apt-get install wget -y
+	apt-get install gzip -y
+	apt-get install tar -y
+	
+elif [ $DISTRO = "Redhat" ];then
+	echo "正在安装服务端程序必备运行库，请确保您拥有高级权限或以root用户运行此脚本"
+	sleep 5
+	yum update -y
+	yum install glibc.i686 libstdc++.i686 -y
+	yum install glibc libstdc++ -y
+	yum install screen -y
+	yum install wget -y
+	yum install gzip -y
+	yum install tar -y
+
+else
+	echo "脚本暂不支持你目前使用的发行版，或许服务端仍适用于你的系统。如果你的发行版为Debian系或Redhat系，请在github内提交issue"
+	echo "请确保您的服务器安装了以下程序"
+	echo "+------+-------------------+"
+	echo "|包名                      |"
+	echo "+------+-------------------+"
+	echo "|glibc.i686 libstdc++.i686 |"
+	echo "+------+-------------------+"
+	echo "|glibc libstdc++           |"
+	echo "+------+-------------------+"
+	echo "|screen                    |"
+	echo "+------+-------------------+"
+	echo "|wget                      |"
+	echo "+------+-------------------+"
+	echo "|gzip                      |"
+	echo "+------+-------------------+"
+	echo "|tar                      |"
+	echo "+------+-------------------+"
+fi
+}
+
+Get_Steamcmd(){
+echo "获取Steam命令行版客户端（从荒年的国内服务器加速下载）"
+mkdir /steamcmd/
+cd /steamcmd/
+wget https://wtrace3zh.com/tools/steamcmd.tar.gz
+tar -zxvf steamcmd.tar.gz
+rm -rf steamcmd.tar.gz
+
+if [ ! -f "/steamcmd/steamcmd.sh" ];then
+ echo -e "${RED_COLOR}啊哦，从荒年的国内服务器加速获取Steamcmd失败，正在从官方服务器获取。${RES}"
+ echo -e "${RED_COLOR}注意！中国大陆境内服务器使用官方服务器获取可能会导致下载失败 ${RES}"
+	wget https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz
+	tar -zxvf steamcmd_linux.tar.gz
+	rm -rf steamcmd_linux.tar.gz
+
+ else
+ 
+ echo "Steamcmd部署成功！"
+ 
+fi
+
+
+
+
+
+
+
+
+}
+
+install_game(){
+cd /steamcmd/
+chmod 777 steamcmd.sh
+./steamcmd.sh +login anonymous +force_install_dir $install_path +app_update $steam_appid validate +quit
+
+}
+
+install_sm(){
+if [ $steam_appid = "740" ];then
+	cd $install_path/csgo/
+	wget https://sm.alliedmods.net/smdrop/1.10/sourcemod-1.10.0-git6502-linux.tar.gz
+	tar -zxvf sourcemod-1.10.0-git6502-linux.tar.gz
+	wget https://mms.alliedmods.net/mmsdrop/1.11/mmsource-1.11.0-git1144-linux.tar.gz
+	tar -zxvf mmsource-1.11.0-git1144-linux.tar.gz
+	rm -rf sourcemod-1.10.0-git6502-linux.tar.gz mmsource-1.11.0-git1144-linux.tar.gz
+	echo "反恐精英：全球攻势 Sourcemod与Metamod服务器插件系统部署成功！"
+	
+	
+elif [ $steam_appid = "232330" ];then
+	cd $install_path/cstrike/
+	wget https://sm.alliedmods.net/smdrop/1.10/sourcemod-1.10.0-git6502-linux.tar.gz
+	tar -zxvf sourcemod-1.10.0-git6502-linux.tar.gz
+	wget https://mms.alliedmods.net/mmsdrop/1.11/mmsource-1.11.0-git1144-linux.tar.gz
+	tar -zxvf mmsource-1.11.0-git1144-linux.tar.gz
+	rm -rf sourcemod-1.10.0-git6502-linux.tar.gz mmsource-1.11.0-git1144-linux.tar.gz
+	echo "反恐精英：起源 Sourcemod与Metamod服务器插件系统部署成功！"
+
+elif [ $steam_appid = "222860" ];then
+	cd $install_path/left4dead2/
+	wget https://sm.alliedmods.net/smdrop/1.10/sourcemod-1.10.0-git6502-linux.tar.gz
+	tar -zxvf sourcemod-1.10.0-git6502-linux.tar.gz
+	wget https://mms.alliedmods.net/mmsdrop/1.11/mmsource-1.11.0-git1144-linux.tar.gz
+	tar -zxvf mmsource-1.11.0-git1144-linux.tar.gz
+	rm -rf sourcemod-1.10.0-git6502-linux.tar.gz mmsource-1.11.0-git1144-linux.tar.gz
+	echo "求生之路2 Sourcemod与Metamod服务器插件系统部署成功！"
+
+elif [ $steam_appid = "232250" ];then
+	cd $install_path/tf2/
+	wget https://sm.alliedmods.net/smdrop/1.10/sourcemod-1.10.0-git6502-linux.tar.gz
+	tar -zxvf sourcemod-1.10.0-git6502-linux.tar.gz
+	wget https://mms.alliedmods.net/mmsdrop/1.11/mmsource-1.11.0-git1144-linux.tar.gz
+	tar -zxvf mmsource-1.11.0-git1144-linux.tar.gz
+	rm -rf sourcemod-1.10.0-git6502-linux.tar.gz mmsource-1.11.0-git1144-linux.tar.gz
+	echo "军团要塞2 Sourcemod与Metamod服务器插件系统部署成功！"
+	
+elif [ $steam_appid = "17705" ];then
+	cd $install_path/insurgency/
+	wget https://sm.alliedmods.net/smdrop/1.10/sourcemod-1.10.0-git6502-linux.tar.gz
+	tar -zxvf sourcemod-1.10.0-git6502-linux.tar.gz
+	wget https://mms.alliedmods.net/mmsdrop/1.11/mmsource-1.11.0-git1144-linux.tar.gz
+	tar -zxvf mmsource-1.11.0-git1144-linux.tar.gz
+	rm -rf sourcemod-1.10.0-git6502-linux.tar.gz mmsource-1.11.0-git1144-linux.tar.gz
+	echo "叛乱2 Sourcemod与Metamod服务器插件系统部署成功！"
+	
+else
+	echo "脚本暂不支持本游戏的插件系统自动部署，请手动部署Sourcemod与Metamod。或在Github页面issues中提交对此游戏的支持"
+	
+fi
+
+}
+
+result_back(){
+echo "------------------------------------------------------"
+echo "|！！！！！脚本运行完成！！！！！！！！！！！！！！   "
+echo "| 游戏服务端位置：$install_path                       "
+echo "| 游戏插件系统位置：$install_path/(游戏主文件夹,例如csgo,cstrike,left4dead2)/addons "
+echo -e "| ${RED_COLOR}请务必手动检查游戏插件系统以及游戏服务端是否部署成功！${RES} "
+echo "------------------------------------------------------"
+
+echo "-----------------------------------------------------"
+echo "|如果此脚本帮到了你，请在Github页面点个star吧！     |"
+echo "|关于脚本有任何问题请在Github内提交issues联系我     |"
+echo "|荒年的个人博客：https://wtrace3zh.today            |"
+echo "|荒年b站主页：https://space.bilibili.com/319404588  |"
+echo "|              欢迎关注我的B站频道                  |"
+echo "----------------------------------------------------|"
+
+exit 0
+}
+
+
+
+
+
+
+
+echo "----------------------------------"
+echo "|          警告！                |"
+echo "|请确保您从官方Github页面获取脚本|"
+echo "|否则可能有人在脚本中注入恶意代码|"
+echo "|因使用非官方途径获取的脚本      |"
+echo "|对服务器造成损坏或任何财产损失  |"
+echo "|脚本作者不承担任何责任          |"
+echo "----------------------------------"
+echo "脚本官方Github页面：https://github.com/2601677867/One-Click-Run_Source_Server"
+echo "作者：一纸荒年Trace / B站：荒年不咕 / Github:2601677867"       
+echo "----------------------------------"
+echo "WSL用户请先将您的子系统升级为WSL 2后在执行此脚本！特别是当你运行时出现： "
+echo "cannot execute binary file: Exec format error 等相关错误时 "
+echo "请参考荒年博客内文章：《在WSL子系统下部署起源游戏服务器》"
+echo "链接：https://wtrace3zh.com/index.php/archives/26/"
+echo '"----------------------------------"'
+read -p "请仔细阅读以上安全注意事项，输入Y继续:" $ready_or_not
+
+
+
+System_check
+Get_Steamcmd
+
+echo "要安装哪个游戏服务端"
+echo "+------+----------+"
+echo "|AppID |游戏服务端|"
+echo "+------+----------+"
+echo "| 740  |  CS:GO   |"
+echo "+------+----------+"
+echo "|232330|  CS:起源 |"
+echo "+------+----------+"
+echo "|222860|  L4D2    |"
+echo "+------+----------+"
+echo "|232250|  TF2     |"
+echo "+------+----------+"
+echo "|17705 |  叛乱    |"
+echo "+------+----------+"
+echo "其他游戏服务端请访问https://developer.valvesoftware.com/wiki/Steam_Application_IDs 来获取服务端Appid"
+
+read -p "请输入Appid：" steam_appid
+
+read -p "请输入服务器端安装路径（例如 /gameserver）(警告！手动输入路径时请使用绝对路径，以/开头)" install_path
+
+mkdir $install_path
+install_game
+
+if [ ! -f "$install_path/srcds_run" ];then
+		echo "${RED_COLOR}游戏服务端程序部署失败，请在github内提交issue（附带脚本运行日志）${RES}"
+		exit 0
+	else
+		echo "游戏服务端程序部署成功！"
+		echo "[debug]$install_path"
+		install_sm
+		result_back
+	fi
+
+
+exit 0
+
+
+```
