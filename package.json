@@ -1,7 +1,7 @@
 {
   "name": "mcp-gamehacking",
-  "version": "2.0.0",
-  "description": "MCP server for game hacking & reverse engineering — 4,100+ skills, 75 agents, 161 subagents, 114 plugins, 148 prompts",
+  "version": "3.0.0",
+  "description": "MCP server for game hacking & reverse engineering — 4,100+ skills, 75 agents, 161 subagents, 114 plugins, 148 prompts, full-text grep, offset cross-ref",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
