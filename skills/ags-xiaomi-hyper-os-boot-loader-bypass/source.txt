@@ -1,0 +1,980 @@
+Project Path: arc_MlgmXyysd_Xiaomi-HyperOS-BootLoader-Bypass_sd7kupkn
+
+Source Tree:
+
+```txt
+arc_MlgmXyysd_Xiaomi-HyperOS-BootLoader-Bypass_sd7kupkn
+├── bypass.php
+├── docker-compose.yml
+├── docs
+│   ├── README-ja.md
+│   ├── README-zh.md
+│   └── README.md
+├── libraries
+│   └── placeholder
+├── run.sh
+└── status.md
+
+```
+
+`bypass.php`:
+
+```php
+<?php
+/**
+ *
+ *    Copyright (C) 2002-2024 NekoYuzu (MlgmXyysd) All Rights Reserved.
+ *    Copyright (C) 2013-2024 MeowCat Studio All Rights Reserved.
+ *    Copyright (C) 2020-2024 Meow Mobile All Rights Reserved.
+ *
+ */
+
+/**
+ *
+ * Xiaomi HyperOS BootLoader Bypass
+ *
+ * https://github.com/MlgmXyysd/Xiaomi-BootLoader-Bypass
+ *
+ * Bypass Xiaomi HyperOS community restrictions of BootLodaer unlock account bind.
+ *
+ * Environment requirement:
+ *   - PHP 8.0+
+ *   - OpenSSL Extension
+ *   - Curl Extension
+ *   - ADB
+ *
+ * @author MlgmXyysd
+ * @version 1.0
+ *
+ * All copyright in the software is not allowed to be deleted
+ * or changed without permission.
+ *
+ */
+
+/***********************
+ *    Configs Start    *
+ ***********************/
+
+// Global flag
+// If you are running a Global ROM (Non-China Mainland), set it to true
+$useGlobal = false;
+
+/*********************
+ *    Configs End    *
+ *********************/
+
+
+/***************************************
+ *               WARNING               *
+ *    Do NOT modify the codes below    *
+ *               WARNING               *
+ ***************************************/
+
+// Include php-adb library
+// https://github.com/MlgmXyysd/php-adb
+
+require_once __DIR__ . DIRECTORY_SEPARATOR . "adb.php";
+
+use MeowMobile\ADB;
+
+/*************************
+ *    Constants Start    *
+ *************************/
+
+global $api;
+global $sign_key;
+global $data_pass;
+global $data_iv;
+
+$api = $useGlobal ? "https://unlock.update.intl.miui.com/v1/" : "https://unlock.update.miui.com/v1/";
+$sign_key = "10f29ff413c89c8de02349cb3eb9a5f510f29ff413c89c8de02349cb3eb9a5f5";
+$data_pass = "20nr1aobv2xi8ax4";
+$data_iv = "0102030405060708";
+
+$version = "1.0";
+
+/***********************
+ *    Constants End    *
+ ***********************/
+
+/*************************
+ *    Functions Start    *
+ *************************/
+
+/**
+ * Formatted Log
+ * @param  $a  ADB    required  ADB instance
+ * @return     array            List of connected adb devices
+ * @author NekoYuzu (MlgmXyysd)
+ * @date   2022/03/24 14:01:03
+ */
+
+function parseDeviceList(ADB $a): array
+{
+    $s = $a -> refreshDeviceList();
+    $t = array();
+    foreach ($s as $d) {
+        if ($d["status"] === $a::CONNECT_TYPE_DEVICE) {
+            $t[] = array($d["serial"], $d["transport"]);
+        }
+    }
+    return $t;
+}
+
+/**
+ * Formatted Log
+ * @param  $m  string  optional  Message
+ * @param  $c  string  optional  Color
+ * @param  $p  string  optional  Indicator
+ * @param  $t  string  optional  Type (Level)
+ * @author NekoYuzu (MlgmXyysd)
+ * @date   2022/03/24 14:50:01
+ */
+
+function logf(string $m = "", string $c = "", string $p = "-", string $t = "I"): void
+{
+	switch (strtoupper($c)) {
+		case "G":
+			$c = "\033[32m";
+			break;
+		case "R":
+			$c = "\033[31m";
+			break;
+		case "Y":
+			$c = "\033[33m";
+			break;
+		default:
+			$c = "";
+	}
+	switch (strtoupper($t)) {
+		case "W":
+			$t = "WARN";
+			break;
+		case "E":
+			$t = "ERROR";
+			break;
+		case "I":
+		default:
+			$t = "INFO";
+	}
+	print(date("[Y-m-d] [H:i:s]") . " [" . $t . "] " . $p . " " . $c . $m . "\033[0m" . PHP_EOL);
+}
+
+/**
+ * Curl HTTP wrapper function
+ * @param  $url      string  required  Target url
+ * @param  $method   string  required  Request method
+ * @param  $fields   array   optional  Request body
+ * @param  $header   array   optional  Request header
+ * @param  $useForm  bool    optional  Treat request body as urlencoded form
+ * @return           array             Curl response
+ * @author NekoYuzu (MlgmXyysd)
+ * @date   2023/11/20 23:50:39
+ */
+
+function http(string $url, string $method, array $fields = array(), array $header = array(), bool $useForm = false): array
+{
+	if ($useForm) {
+		$fields = http_build_query($fields);
+	}
+    $curl = curl_init();
+    curl_setopt_array($curl, array(
+		CURLOPT_URL => $url,
+		CURLOPT_RETURNTRANSFER => true,
+		CURLOPT_ENCODING => "",
+		CURLOPT_SSL_VERIFYPEER => false,
+		CURLOPT_SSL_VERIFYHOST => false,
+		CURLOPT_MAXREDIRS => 10,
+		CURLOPT_CONNECTTIMEOUT => 2,
+		CURLOPT_TIMEOUT => 6,
+		CURLOPT_CUSTOMREQUEST => $method,
+		CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+		CURLOPT_POST => $method == "POST",
+		CURLOPT_POSTFIELDS => $fields,
+		CURLOPT_HTTPHEADER => $header
+    ));
+
+    $response = curl_exec($curl);
+    $info = curl_getinfo($curl);
+    $info["errno"] = curl_errno($curl);
+    $info["error"] = curl_error($curl);
+    $info["request"] = json_encode($fields);
+    $info["response"] = $response;
+    curl_close($curl);
+    return $info;
+}
+
+/**
+ * HTTP POST wrapper
+ * @param  $_api     string  required  Target endpoint
+ * @param  $data     array   optional  Request body
+ * @param  $header   array   optional  Request header
+ * @param  $useForm  bool    optional  Treat request body as urlencoded form
+ * @return           array             Curl response
+ * @return           false             Response code is not HTTP 200 OK
+ * @author NekoYuzu (MlgmXyysd)
+ * @date   2023/11/20 23:55:41
+ */
+
+function postApi(string $_api, array $data = array(), array $header = array(), bool $useForm = false): array|false
+{
+    $response = http($GLOBALS["api"] . $_api, "POST", $data, $header, $useForm);
+    if ($response["http_code"] != 200) {
+        return false;
+    }
+    return json_decode($response["response"], true);
+}
+
+/**
+ * Sign data using HMAC SHA-1
+ * @param  $data  string  required  Data to sign
+ * @return        string            Signed hash
+ * @author NekoYuzu (MlgmXyysd)
+ * @date   2023/11/21 00:20:56
+ */
+
+function signData(string $data): string
+{
+    return strtolower(bin2hex(hash_hmac("sha1", "POST\n/v1/unlock/applyBind\ndata=" . $data . "&sid=miui_sec_android", $GLOBALS["sign_key"], true)));
+}
+
+/**
+ * Decrypt data using AES/CBC/PKCS5Padding
+ * @param  $data  string  required  Data to decrypt
+ * @return        string            Decrypted data
+ * @return        false             Failed to decrypt
+ * @author NekoYuzu (MlgmXyysd)
+ * @date   2023/11/21 00:15:30
+ */
+
+function decryptData(string $data): string|false
+{
+	return openssl_decrypt(base64_decode($data), "AES-128-CBC", $GLOBALS["data_pass"], OPENSSL_RAW_DATA, $GLOBALS["data_iv"]);
+}
+
+/***********************
+ *    Functions End    *
+ ***********************/
+
+/**********************
+ *    Banner Start    *
+ **********************/
+
+logf("************************************", "g");
+logf("* Xiaomi HyperOS BootLoader Bypass *", "g");
+logf("* By NekoYuzu          Version " . $version . " *", "g");
+logf("************************************", "g");
+logf("GitHub: https://github.com/MlgmXyysd");
+logf("XDA: https://xdaforums.com/m/mlgmxyysd.8430637");
+logf("X (Twitter): https://x.com/realMlgmXyysd");
+logf("PayPal: https://paypal.me/MlgmXyysd");
+logf("My Blog: https://www.neko.ink/");
+logf("************************************", "g");
+
+/********************
+ *    Banner End    *
+ ********************/
+
+/********************
+ *    Main Logic    *
+ ********************/
+
+logf("Starting ADB server...");
+
+$adb = new ADB(__DIR__ . DIRECTORY_SEPARATOR . "libraries");
+
+$devices = parseDeviceList($adb);
+$devices_count = count($devices);
+
+while ($devices_count != 1) {
+	if ($devices_count == 0) {
+		logf("Waiting for device connection...");
+	} else {
+		logf("Only one device is allowed to connect, disconnect others to continue. Current number of devices: " . $devices_count);
+	}
+	sleep(1);
+	$devices = parseDeviceList($adb);
+	$devices_count = count($devices);
+}
+
+$device = $devices[0];
+$id = $adb -> getDeviceId($device[1], true);
+logf("Processing device " . $device[0] . "(" . $device[1] . ")...");
+
+$adb -> clearLogcat($id);
+$adb -> runAdb($id . "shell svc data enable");
+
+logf("Finding BootLoader unlock bind request...");
+
+$focus = $adb -> getCurrentActivity();
+if ($focus[0] != "com.android.settings") {
+	if ($focus[0] != "NotificationShade") {
+		$adb -> runAdb($id . "shell am start -a android.settings.APPLICATION_DEVELOPMENT_SETTINGS");
+	}
+} else {
+	if ($focus[1] != "com.android.settings.bootloader.BootloaderStatusActivity") {
+		$adb -> runAdb($id . "shell am start -a android.settings.APPLICATION_DEVELOPMENT_SETTINGS");
+	}
+}
+logf("Now you can bind account in the developer options.", "y", "*");
+
+$args = $headers = null;
+
+$process = proc_open($adb -> bin . " " . $id . "logcat *:S CloudDeviceStatus:V", array(
+	1 => ["pipe", "w"]
+), $pipes);
+
+if (is_resource($process)) {
+    while (!feof($pipes[1])) {
+        $output = fgets($pipes[1]);
+
+        if (str_contains($output, "CloudDeviceStatus: args:")) {
+            if (preg_match("/args:(.*)/", $output, $matches)) {
+                $args = trim($matches[1]);
+            }
+			$adb -> runAdb($id . "shell svc data disable");
+        }
+
+        if (str_contains($output, "CloudDeviceStatus: headers:")) {
+            if (preg_match("/headers:(.*)/", $output, $matches)) {
+                $headers = trim($matches[1]);
+            }
+			logf("Account bind request found! Let's block it.");
+            break;
+        }
+    }
+
+    fclose($pipes[1]);
+}
+
+logf("Refactoring parameters...");
+
+$data = json_decode(decryptData($args), true);
+
+// V816 is the special identity for HyperOS in MIUI version
+$data["rom_version"] = str_replace("V816", "V14", $data["rom_version"]);
+
+$data = json_encode($data);
+$sign = signData($data);
+
+$headers = decryptData($headers);
+$cookies = null;
+if (preg_match("/Cookie=\[(.*)\]/", $headers, $matches)) {
+	$cookies = trim($matches[1]);
+}
+
+logf("Sending POST request...");
+$res = postApi("unlock/applyBind", array(
+	"data" => $data,
+	"sid" => "miui_sec_android",
+	"sign" => $sign
+), array(
+	"Cookie: " . $cookies,
+	"Content-Type: application/x-www-form-urlencoded"
+), true);
+
+$adb -> runAdb($id . "shell svc data enable");
+
+if (!$res) {
+	logf("Fail to send request, check your internet connection.", "r", "!");
+	exit();
+}
+
+switch ($res["code"]) {
+	case 0:
+		logf("Target account: " . $res["data"]["userId"], "g");
+		logf("Account bound successfully, wait time can be viewed in the unlock tool.", "g");
+		break;
+	case 401:
+		logf("Account credentials have expired, re-login to your account in your phone. (401)", "y");
+		break;
+	case 20086:
+		logf("Device credentials expired. (20086)", "y");
+		break;
+	case 30001:
+		logf("Binding failed, this device has been forced to verify the account qualification by Xiaomi. (30001)", "y");
+		break;
+	case 86015:
+		logf("Fail to bind account, invalid device signature. (86015)", "y");
+		break;
+	default:
+		logf($res["descEN"] . " (" . $res["code"] . ")", "y");
+}
+
+```
+
+`docker-compose.yml`:
+
+```yml
+services:
+  php-cli:
+    image: php:8.2-apache
+    privileged: true
+    restart: unless-stopped
+    volumes:
+      - .:/var/www/html
+      - /dev/bus/usb:/dev/bus/usb
+
+```
+
+`docs/README-ja.md`:
+
+```md
+# Xiaomi HyperOS BootLoader Bypass
+
+![Version: 1.0](https://img.shields.io/badge/Version-1.0-brightgreen?style=for-the-badge) [![English](https://img.shields.io/badge/English-brightgreen?style=for-the-badge)](README.md) [![中文文档](https://img.shields.io/badge/中文文档-brightgreen?style=for-the-badge)](README-zh.md)
+
+脆弱性を悪用し、コミュニティレベルのアカウントバインド制限をバイパスして、Xiaomi HyperOS の BootLoader のロックを解除できる PoC。
+
+> [!NOTE]
+> Pull reqeust で このプロジェクトの改善を提案できます :)
+
+## 💘 php-adb
+
+このプロジェクトでは [php-adb](https://github.com/MlgmXyysd/php-adb) ライブラリを使用しています。
+
+## ☕ コーヒーを奢る
+
+✨ このプロジェクトが気に入ったら、以下の方法でコーヒーを奢ってください：
+
+ - [AFDIAN](https://afdian.net/@MlgmXyysd)
+ - [PayPal](https://paypal.me/MlgmXyysd)
+ - [Patreon](https://www.patreon.com/MlgmXyysd)
+
+## ⚠️ 警告
+
+BootLoader のロックを解除した後、以下の問題が発生する可能性があります：
+
+- ソフトウェアの異常動作／ハードウェアの損傷
+- デバイスに保存されているデータの損失
+- クレジットカードの盗難、またはその他の経済的損失
+
+> [!CAUTION]
+> 上記のいずれかが発生した場合は、BootLoader のロックを解除する際に発生する可能性があるリスクであるため、すべての責任は自分で負う必要があります。  
+これは明らかにすべてのリスクを保障するものではありません。**警告しましたからね**。
+
+- 保証適用外  
+  基本保証だけでなく、購入した追加の延長保証の一部 (Mi Care や画面破損の保証など) も、Xiaomi が提供する除外規定に従って失われる可能性があります。
+- TEE 関連の機能は永久に使用不可能です。  
+  Samsung Knox のようにハードウェア レベルで自己破壊するため、マザーボードを交換する以外に復旧方法はありません。
+- ソースコード非公開のカーネルが原因で、サードパーティ システムをフラッシュした後の機能異常
+- BootLoader のロックを解除すると、デバイスまたはアカウントが BAN されます。
+
+> [!WARNING]
+> 上記のいずれかが発生した場合は、運が悪いと思ってください。  
+Xiaomi が BootLoader のロック解除を制限して以来、Xiaomi の「オタク」精神、さらには GPL にも違反しています。
+> BootLoader のロック解除に対する Xiaomi の制限は無限であり、開発者としてそれに対してできることは何もありません。
+
+## 📲 アンロック要件
+
+- 対象デバイス：
+  - BAN されていない[^1] Xiaomi、Redmi、または POCO デバイス
+  - デバイスが HyperOS の公式バージョンを実行している
+  - (2023/11/23 に追記) デバイスは Xiaomi によってアカウントの資格確認を強制されない
+- 有効な SIM カード：
+  - SIM カードが使用できないタブレットを除く[^1]
+  - SIM カードのサービスが使用不能になっていない
+  - SIM カードはモバイルネットワークにアクセスできる
+  - 有効な SIM カード毎に、３か月以内に ２台のデバイスのロックを解除できます。
+- 有効な Xiaomi アカウント
+  - BAN されていない[^1] Xiaomi アカウント
+  - 各アカウントでロックを解除できるのは、１ヶ月で１台、１年で３台のみです。
+- 上記の [警告](#%EF%B8%8F-警告) を読み、理解したものとします。
+
+[^1]: Xiaomi が提供するロック解除手順によると、特定のアカウントとデバイスはロック解除ツールの使用を禁止されます。これは「リスク管理」と呼ばれています。
+
+## ⚙️ 使用方法
+1. [公式サイト](https://www.php.net/downloads) からシステムに PHP 8.0+ をダウンロードしてインストールします。
+2. `php.ini` で OpenSSL と Curl 拡張機能を有効にします。  
+  (スクリプトが機能しない場合は、`extension_dir` を PHP の `ext` ディレクトリに設定してください。)
+3. [php-adb](https://github.com/MlgmXyysd/php-adb) の `adb.php` をディレクトリに配置します。
+4. [platform-tools](https://developer.android.com/studio/releases/platform-tools?hl=ja#downloads) をダウンロードして`libraries` に展開します。
+  ※注意: Mac OS では、`adb` の名前を `adb-darwin` に変更する必要があります。
+5. ターミナルを開き、PHP インタープリターを使用して[スクリプト](../bypass.php)を実行します。
+
+- P.S. [Releases](https://github.com/MlgmXyysd/Xiaomi-HyperOS-BootLoader-Bypass/releases/latest) には、必要なファイルとクイック実行スクリプトが同梱されています。
+
+6. `設定`→`デバイス情報`→`MIUIバージョン`を７回以上連続でタッチして`開発者向けオプション`を有効にします。
+7. `設定`→`追加設定`→`開発者向けオプション`で、`OEMロック解除`、`USBデバッグ`、`USBデバッグ (セキュリティ設定)` を有効にします。
+8. **有効な**[^1] Xiaomi アカウントでログインします。
+9. デバイスを優先でPCに接続します。
+10. `このPCからのUSBデバイスを常に許可する` にチェックを入れてから `OK` を押します。
+
+- ※ 上記の["アンロック要件"](#-アンロック要件)を確認して下さい。
+
+11. スクリプトの指示に従い待機します。
+12. バインドが成功したら、[公式のロック解除ツール](https://www.miui.com/unlock/index.html)を使用して、解除が可能になるまでの待機時間を確認できます。
+13. 待機時間中は、デバイスを通常どおり使用し、SIM カードを挿入したままにし、Xiaomi アカウントからログアウトしたり、`デバイスを探す`をオフにしたりせず、ロックが正常に解除されるまでデバイスを再バインドしないでください。  
+  デバイスは定期的に`HeartBeat`パケットをサーバーに自動的に送信します。
+
+## 📖 回避策
+
+- 準備中...
+
+## 🔖 FAQ
+
+- Q: ロック解除ツールが依然として 168/360 (またはそれ以上) 時間待つように要求するのはなぜですか？
+  - A: 原則として、この PoC は、Xiaomi が HyperOS に対して追加した追加の制限を回避するだけです。  
+    MIUI の制限に従う必要があります。
+
+- Q: デバイスに `Couldn't verify, wait a minute or two and try again` と表示される。
+  - A: これは正常であり、デバイス側のバインド要求はスクリプトによってブロックされます。  
+    実際のバインド結果は、スクリプトプロンプトの影響を受けます。
+
+- Q: エラーコード `401` でバインドに失敗しました。
+  - A: Xiaomi アカウントの認証情報の有効期限が切れているため、デバイスからログアウトして再度ログインする必要があります。
+
+- Q: エラーコード `20086` でバインドに失敗しました。
+  - A: デバイスの認証情報の有効期限が切れているため、デバイスを再起動する必要があります。
+
+- Q: エラーコード `20090` または `20091` でバインドに失敗しました。
+  - A: デバイスの `Security Device Credential Manager` 機能が破損しています。  
+    サポートについてはアフターサービスにお問い合わせください。
+
+- Q: エラーコード `30001` でバインドに失敗しました。
+  - A: デバイスは、Xiaomi によってアカウントの資格確認を強制されました。  
+    Xiaomi はずっと前に「オタク」の精神を失っており、それについて私たちにできることは何もありません。
+
+- Q: エラーコード `86015` でバインドに失敗しました。
+  - A: サーバーがバインド要求を拒否しました。もう一度試してください。
+
+## ⚖️ ライセンス
+
+ライセンスがない場合、このプロジェクトの使用のみが許可されます。  
+このソフトウェア（およびリンクなど）のすべての著作権を許可なく削除または変更することはできません。  
+このプロジェクトのすべての権利は、[MeowCat Studio](https://github.com/MeowCat-Studio)、[Meow Mobile](https://github.com/Meow-Mobile)、[NekoYuzu](https://github.com/MlgmXyysd) に帰属します。
+
+```
+
+`docs/README-zh.md`:
+
+```md
+# Xiaomi HyperOS BootLoader Bypass
+
+![Version: 1.0](https://img.shields.io/badge/Version-1.0-brightgreen?style=for-the-badge) [![English](https://img.shields.io/badge/English-brightgreen?style=for-the-badge)](README.md) [![日本語](https://img.shields.io/badge/日本語-brightgreen?style=for-the-badge)](README-ja.md)
+
+利用漏洞绕过小米 HyperOS 对 BootLoader 解锁账户绑定限制社区等级的 PoC。
+
+您可随时向本项目提出改进方案 :)
+
+## 💘 php-adb
+
+本项目使用了 [php-adb](https://github.com/MlgmXyysd/php-adb) 运行库。
+
+## ☕ 支持开发
+
+✨ 如果您喜欢我的项目，可以请我喝咖啡:
+
+ - [爱发电](https://afdian.net/@MlgmXyysd)
+ - [PayPal](https://paypal.me/MlgmXyysd)
+ - [Patreon](https://www.patreon.com/MlgmXyysd)
+
+## ⚠️ 警告
+
+解锁 BootLoader 后，你可能会遇到以下情况：
+
+- 软件或硬件无法正常工作，甚至永久性损坏。
+- 设备中存储的数据丢失。
+- 信用卡被盗刷，或遭受其他经济损失。
+
+如果您遇到上述任何情况，您应该自己承担所有责任，因为这是您在解锁 BootLoader 时可能遇到的风险。这显然不能涵盖所有风险。我们已经警告过您了。
+
+- 保修丢失。根据小米提供的免责条款，这不仅是基础三包，您购买的一些额外延保（如 Mi Care 或碎屏险）也可能会丢失。
+- 像 Samsung Knox 那样的硬件级熔断。TEE 相关功能将永久损坏。除更换主板外，无法恢复。
+- 刷入第三方系统后出现功能异常，这可能是因为内核源代码闭源引起。
+- 设备或账号因为解锁 BootLoader 被小米封禁。
+
+如果您遇到上述任何情况，请您自认倒霉。自从小米限制解锁 BootLoader 后，小米就一直在违背"极客"精神，甚至违背了 GPL。小米对 BootLoader 解锁的限制是无穷尽的，作为开发者，我们对此无能为力。
+
+## 📲 前置要求
+
+- 一个有效的设备:
+  - 一个未被封禁\*的小米、红米或 POCO 设备。
+  - 设备正在运行官方版 HyperOS。
+  - (2023/11/23 更新) 您的设备不会被小米强制验证账户资格。
+- 一个有效的 SIM 卡:
+  - \* 无法使用 SIM 卡的平板电脑除外。
+  - SIM 卡不得处于停机或无服务状态。
+  - SIM 卡需要能够连接到互联网。
+  - 每张有效 SIM 卡在三个月内只能解锁 2 台设备。
+- 一个有效的小米账号:
+  - 一个未被封禁\*的小米账号。
+  - 每个账号一个月只能解锁一部手机，一年只能解锁三部手机。
+- 您已阅读并理解上述 [警告](#%EF%B8%8F-警告)。
+
+- \* 根据小米提供的解锁说明，某些账号和设备将被禁止使用解锁工具，这被称为"风控"。
+
+## ⚙️ 使用教程
+
+1. 从 [官方网站](https://www.php.net/downloads) 下载并安装适用于您操作系统的 PHP 8.0+。
+2. 在 `php.ini` 中启用 OpenSSL 和 Curl 扩展。（如果脚本未正常工作，请将 `extension_dir` 设置为 PHP 的 `ext` 文件夹路径。）
+3. 将 [php-adb](https://github.com/MlgmXyysd/php-adb) 中的 `adb.php` 放到目录中。
+4. 下载 [platform-tools](https://developer.android.com/studio/releases/platform-tools)，并将其放入 `libraries`。*注意：Mac OS 需要将 `adb` 重命名为 `adb-darwin`。
+5. 打开终端，使用 PHP 解释器执行 [脚本](../bypass.php)。
+
+- p.s. Releases 已将所需文件和一键脚本打包。
+
+6. 多次点击`设置 - 关于手机 - MIUI 版本`启用`开发者选项`。
+7. 在`设置 - 附加设置 - 开发者选项`中启用`OEM 解锁`、`USB 调试`和`USB 调试（安全设置）`。
+8. 登录一个_有效_\*的小米账号。
+9. 通过有线方式将设备连接到电脑。
+10. 选中`始终允许来自此计算机的调试`，然后单击`确定`。
+
+- \* 请参阅上文的 "[前置要求](#-前置要求)"。
+
+11. 等待并按脚本提示操作。
+12. 绑定成功后，您可以使用 [官方解锁工具](https://www.miui.com/unlock/index.html) 查看需要等待的时间。
+13. 在等待期间，请正常使用设备，保持 SIM 卡插入，不要登出小米账号或关闭"查找我的手机"，不要重新绑定设备，直到成功解锁。设备将每隔一段时间自动向服务器发送 `HeartBeat` 数据包。
+
+## 📖 漏洞分析
+
+- 维修中...
+
+## 🔖 FAQ
+
+- Q: 为什么解锁工具仍然提醒我等待 168/360（或更长）小时？
+  - A: 根据原理，该 PoC 只绕过了小米为 HyperOS 额外添加的限制。您仍然需要遵循 MIUI 的限制。
+
+- Q: 设备显示 "验证失败，请稍后再试"。
+  - A: 这是正常现象，设备端的绑定请求已被脚本拦截。实际绑定结果以脚本提示为准。
+
+- Q: 绑定失败，错误代码为 `401`。
+  - A: 您的小米账号凭据已过期，您需要在设备中登出账号并重新登录。
+
+- Q: 绑定失败，错误代码为 `20086`。
+  - A: 您的设备凭据已过期，您可能需要重新启动设备。
+
+- Q: 绑定失败，错误代码为 `20090` 或 `20091`。
+  - A: 设备的 `Security Device Credential Manager` 功能已损坏，请联系售后服务寻求支持。
+
+- Q: 绑定失败，错误代码为 `30001`。
+  - A: 您的设备已被小米强制验证账户资格。小米早就抛弃了"极客"精神，我们对此无能为力。
+
+- Q: 绑定失败，错误代码为 `86015`。
+  - A: 服务器拒绝了本次绑定请求，请重试。
+
+## ⚖️ 协议
+
+无许可证，您只被允许使用本项目。未经许可，不得删除或更改本软件的所有版权（以及链接等）。本项目所有权利归 [MeowCat Studio](https://github.com/MeowCat-Studio)、[Meow Mobile](https://github.com/Meow-Mobile) 和 [NekoYuzu](https://github.com/MlgmXyysd) 所有。
+
+```
+
+`docs/README.md`:
+
+```md
+# Xiaomi HyperOS BootLoader Bypass
+
+![Version: 1.0](https://img.shields.io/badge/Version-1.0-brightgreen?style=for-the-badge) [![中文文档](https://img.shields.io/badge/中文文档-brightgreen?style=for-the-badge)](README-zh.md) [![日本語](https://img.shields.io/badge/日本語-brightgreen?style=for-the-badge)](README-ja.md)
+
+A PoC that exploits a vulnerability to bypass the Xiaomi HyperOS community restrictions of BootLoader unlocked account bindings.
+
+Feel free pull request if you want :)
+
+## 💘 php-adb
+
+The project proudly uses the [php-adb](https://github.com/MlgmXyysd/php-adb) library.
+
+## ☕ Buy me a Coffee
+
+✨ If you like my projects, you can buy me a coffee at:
+
+ - [爱发电](https://afdian.net/@MlgmXyysd)
+ - [PayPal](https://paypal.me/MlgmXyysd)
+ - [Patreon](https://www.patreon.com/MlgmXyysd)
+
+## ⚠️ Warning
+
+After unlocking the BootLoader, you may encounter the following situations:
+
+- Software or hardware not working properly or even damaged.
+- Loss of data stored in the device.
+- Credit card theft, or other financial loss.
+
+If you're experiencing any of the above, you should take all the responsibility yourself as this is the risk you may encounter when unlocking BootLoader. This obviously does not cover all risks. You've been warned.
+
+- Warranty lost. Not only the base warranty, but some of the extra extended warranties (such as Mi Care or broken-screen warranty) that you have purchased may also be lost according to the exclusions provided by Xiaomi.
+- Hardware level self-destruct like Samsung Knox. TEE-related features will be permanently damaged. There is no way to restore other than by replacing the motherboard.
+- Functional anomalies after flashing a third-party system due to closed-source kernel source code.
+- Device or account banned by unlocking BootLoader.
+
+If you're experiencing any of the above, consider yourself damned. Ever since Xiaomi restricted unlocking BootLoader, it has been against Xiaomi's 'geek' spirit and even the GPL. Xiaomi's restrictions on BootLoader unlocking are endless, and there's nothing we as developers can do about it.
+
+## 📲 Unlocking requirements
+
+- A valid device:
+  - A unbanned\* Xiaomi, Redmi or POCO device.
+  - Your device is running the official version of HyperOS.
+  - (Update 2023/11/23) Your device is not forced to verify account qualification by Xiaomi.
+- A valid SIM card:
+  - \* Except for tablets that cannot use SIM cards.
+  - SIM card must not be out of service.
+  - SIM card needs to be able to access the internet.
+  - Only 2 devices per valid SIM card are allowed to be unlock to a valid SIM card within a three-month period.
+- A valid Xiaomi account:
+  - An unbanned\* Xiaomi account.
+  - Each account can only unlock 1 phone in a month and 3 phones in a year period.
+- You have read and understood the [Warning](#%EF%B8%8F-warning) above.
+
+- \*  According to the unlocking instructions provided by Xiaomi, it will prohibit some accounts and devices from using the unlocking tool, which is called "risk control".
+
+## ⚙️ How to use
+
+1. Download and install PHP 8.0+ for your system from the [official website](https://www.php.net/downloads).
+2. Enable OpenSSL and Curl extension in `php.ini`. (And/or set `extension_dir` to your PHP's `ext` directory if script not work.)
+3. Place `adb.php` in [php-adb](https://github.com/MlgmXyysd/php-adb) to the directory.
+4. Download [platform-tools](https://developer.android.com/studio/releases/platform-tools) and place them in `libraries`. *Note: Mac OS needs to rename `adb` to `adb-darwin`.*
+5. Open a terminal and use PHP interpreter to execute the [script](../bypass.php).
+
+- p.s. Releases has packaged the required files and click-to-run scripts.
+
+6. Tap repeatedly on the `Settings - About Phone - MIUI Version` to enable `Development Options`.
+7. Enable `OEM Unlocking`, `USB Debugging` and `USB Debugging (Security Settings)` in `Settings - Additional Settings - Development Options`.
+8. Log in a _valid_\* Xiaomi account.
+9. Connect phone to PC via wired interface.
+10. Check `Always allow from this computer` and click `OK`.
+
+- \* See "[Unlocking Requirements](#-Unlocking-requirements)" above.
+
+11. Wait and follow the prompts of script.
+12. After successful binding, you can use the [official unlock tool](https://en.miui.com/unlock/index.html) to check the time you need to wait.
+13. During the waiting period, please use the device normally, keep the SIM card inserted, do not log out of your account or turn off `Find My Phone`, and do not re-bind the device until it is successfully unlocked. The device will automatically send `HeartBeat` packets to the server every once in a while.
+
+## 📖 Workaround
+
+- Undergoing maintenance...
+
+## 🔖 FAQs
+
+- Q: Why does the unlock tool still remind me to wait 168/360 (or more) hours?
+  - A: By principle, this PoC only bypasses the restrictions added for HyperOS. You still need to comply with the restrictions for MIUI.
+
+- Q: The device shows `Couldn't verify, wait a minute or two and try again`.
+  - A: This is normal, the binding request on the device side has been blocked by our script. The actual binding result is subject to the script prompt.
+
+- Q: Binding failed with error code `401`.
+  - A: Your Xiaomi account credentials have expired, you need to log out and log in again in your device.
+
+- Q: Binding failed with error code `20086`.
+  - A: Your device credentials have expired, you need to reboot your device.
+
+- Q: Binding failed with error code `20090` or `20091`.
+  - A: Device's Security Device Credential Manager function failure, contact after-sales.
+
+- Q: Binding failed with error code `30001`.
+  - A: Your device has been forced to verify the account qualification by Xiaomi. Xiaomi lost its 'geek' spirit a long time ago, and there's nothing we can do about it.
+
+- Q: Binding failed with error code `86015`.
+  - A: The server has rejected this bind request, please try again.
+
+## ⚖️ License
+
+No license, you are only allowed to use this project. All copyright (and link, etc.) in this software is not allowed to be deleted or changed without permission. All rights are reserved by [MeowCat Studio](https://github.com/MeowCat-Studio), [Meow Mobile](https://github.com/Meow-Mobile) and [NekoYuzu](https://github.com/MlgmXyysd).
+
+```
+
+`libraries/placeholder`:
+
+```
+# Do NOT remove this folder
+```
+
+`run.sh`:
+
+```sh
+#!/bin/bash
+####
+# Setup environment to run application in a docker container
+#
+# @todo:
+#   
+#
+# @author: stev leibelt <artodeto@bazzline.net>
+# @since: 2024-01-31
+####
+
+function _build ()
+{
+  # stop execution if one comand fails
+  set -e
+
+  local PATH_OF_THIS_SCRIPT
+
+  PATH_OF_THIS_SCRIPT=$(realpath "$(dirname "${0}")")
+
+  if [[ ! -f "${PATH_OF_THIS_SCRIPT}"/adb.php ]];
+  then
+    wget -O "${PATH_OF_THIS_SCRIPT}"/adb.php https://raw.githubusercontent.com/MlgmXyysd/php-adb/master/src/adb.php
+  fi
+
+  if [[ ! -f "${PATH_OF_THIS_SCRIPT}"/libraries/adb ]];
+  then
+    wget -O "${PATH_OF_THIS_SCRIPT}"/libraries/tools.zip https://dl.google.com/android/repository/platform-tools_r34.0.5-linux.zip
+    unzip -d "${PATH_OF_THIS_SCRIPT}"/libraries "${PATH_OF_THIS_SCRIPT}"/libraries/tools.zip
+    rm "${PATH_OF_THIS_SCRIPT}"/libraries/tools.zip
+    mv "${PATH_OF_THIS_SCRIPT}"/libraries/platform-tools/* "${PATH_OF_THIS_SCRIPT}"/libraries/
+    rmdir "${PATH_OF_THIS_SCRIPT}"/libraries/platform-tools
+  fi
+}
+
+function _main ()
+{
+  case "${1}" in
+    build)
+      _build
+      ;;
+    login)
+      _login
+      ;;
+    start)
+      _start
+      ;;
+    stop)
+      _stop
+      ;;
+    *)
+      echo "Usage: ${0} {build|login|start|stop}"
+      return 1
+      ;;
+  esac
+}
+
+function _login ()
+{
+  _start
+  docker compose exec php-cli bash
+}
+
+function _start ()
+{
+  _stop
+  _build
+  if command -v adb &> /dev/null;
+  then
+    adb kill-server
+  fi
+  docker compose up -d
+}
+
+function _stop ()
+{
+  docker compose down
+}
+
+_main "${@}"
+
+```
+
+`status.md`:
+
+```md
+# Device Status
+
+- This auto-generated list only included devices with the official Xiaomi HyperOS available. It is designed to track devices capable of bypassing BootLoader unlocking restrictions.
+- Since Xiaomi's unlocking restrictions only apply to devices sold in PRC market (excluding Hong Kong, Macau and Taiwan), it focuses on devices sold in China mainland.
+
+## Status Description
+
+- ✔️ Opening: Unlock channel available. Restrictions can be bypassed.
+- ❌ Blocked: Xiaomi has enforced verification. Unlocking is only possible with an authorized account.
+- ⚠️ Unsupported: Xiaomi prohibits unlocking this device, regardless of permissions.
+- ❓ Unknown: The unlock policy for this device could not be found in Xiaomi servers. Please refer to the actual situation. (Feedback required)
+
+----
+
+| Name | Code | Release Date | Initial OS | Status |
+| :- | :-: | :-: | :-: | :- |
+| Xiaomi 10 | umi | 2020-02-13 | MIUI | ✔️ Opening |
+| Xiaomi 10S | thyme | 2021-03-10 | MIUI | ✔️ Opening |
+| Xiaomi 10 Pro | cmi | 2020-02-13 | MIUI | ✔️ Opening |
+| Xiaomi 10 Ultra | cas | 2020-08-11 | MIUI | ✔️ Opening |
+| Xiaomi 11 Lite | lisa | 2021-12-09 | MIUI | ✔️ Opening |
+| Xiaomi 11 | venus | 2020-12-28 | MIUI | ✔️ Opening |
+| Xiaomi 11 Pro | star | 2021-03-29 | MIUI | ✔️ Opening |
+| Xiaomi 11 Ultra | star | 2021-03-29 | MIUI | ✔️ Opening |
+| Xiaomi 12X | psyche | 2021-12-28 | MIUI | ✔️ Opening |
+| Xiaomi 12 | cupid | 2021-12-28 | MIUI | ✔️ Opening |
+| Xiaomi 12 Pro | zeus | 2021-12-28 | MIUI | ✔️ Opening |
+| Xiaomi 12 Pro Dimensity | daumier | 2022-07-04 | MIUI | ✔️ Opening |
+| Xiaomi 12S | mayfly | 2022-07-04 | MIUI | ✔️ Opening |
+| Xiaomi 12S Pro | unicorn | 2022-07-04 | MIUI | ✔️ Opening |
+| Xiaomi 12S Ultra | thor | 2022-07-04 | MIUI | ✔️ Opening |
+| Xiaomi 13 | fuxi | 2022-12-11 | MIUI | ✔️ Opening |
+| Xiaomi 13 Pro | nuwa | 2022-12-12 | MIUI | ✔️ Opening |
+| Xiaomi 13 Ultra | ishtar | 2023-04-18 | MIUI | ✔️ Opening |
+| Xiaomi 14 | houji | 2023-10-26 | Xiaomi HyperOS | ❌ Blocked |
+| Xiaomi 14 Pro | shennong | 2023-10-26 | Xiaomi HyperOS | ❌ Blocked |
+| Xiaomi 14 Pro Ti Satellite | shennong | 2024-02-22 | Xiaomi HyperOS | ❌ Blocked |
+| Xiaomi 14 Ultra | aurora | 2024-02-22 | Xiaomi HyperOS | ❓ Unknown |
+| Xiaomi MIX 4 | odin | 2021-08-10 | MIUI | ✔️ Opening |
+| Xiaomi MIX Fold | cetus | 2021-03-30 | MIUI Fold | ✔️ Opening |
+| Xiaomi MIX Fold 2 | zizhan | 2022-08-11 | MIUI Fold | ✔️ Opening |
+| Xiaomi MIX Fold 3 | babylon | 2023-08-14 | MIUI Fold | ✔️ Opening |
+| Xiaomi MIX Fold 4 | goku | 2024-07-19 | Xiaomi HyperOS | ❌ Blocked |
+| Xiaomi MIX Flip | ruyi | 2024-07-19 | Xiaomi HyperOS | ❌ Blocked |
+| Xiaomi Civi | mona | 2021-09-27 | MIUI | ✔️ Opening |
+| Xiaomi Civi 1S | zijin | 2022-04-21 | MIUI | ✔️ Opening |
+| Xiaomi Civi 2 | ziyi | 2022-09-27 | MIUI | ✔️ Opening |
+| Xiaomi Civi 3 | yuechu | 2023-05-25 | MIUI | ✔️ Opening |
+| Xiaomi Civi 4 Pro | chenfeng | 2024-03-21 | Xiaomi HyperOS | ❌ Blocked |
+| Xiaomi Pad 5 | nabu | 2021-08-10 | MIUI Pad | ✔️ Opening |
+| Xiaomi Pad 5 Pro | elish | 2021-08-10 | MIUI Pad | ✔️ Opening |
+| Xiaomi Pad 5 Pro 5G | enuma | 2021-08-10 | MIUI Pad | ✔️ Opening |
+| Xiaomi Pad 5 Pro 12.4 | dagu | 2022-08-11 | MIUI Pad | ✔️ Opening |
+| Xiaomi Pad 6 | pipa | 2023-04-18 | MIUI Pad | ✔️ Opening |
+| Xiaomi Pad 6 Pro | liuqin | 2023-04-18 | MIUI Pad | ✔️ Opening |
+| Xiaomi Pad 6 Max | yudi | 2023-08-14 | MIUI Pad | ✔️ Opening |
+| Xiaomi Pad 6S Pro | sheng | 2024-02-22 | Xiaomi HyperOS | ❌ Blocked |
+| Redmi 12C | earth | 2022-12-31 | MIUI | ✔️ Opening |
+| Redmi 12 | sky | 2023-08-14 | MIUI | ✔️ Opening |
+| Redmi 12R | sky | 2023-12-09 | MIUI | ✔️ Opening |
+| Redmi Note 12R | sky | 2023-06-28 | MIUI | ✔️ Opening |
+| Redmi 13R | air | 2023-12-08 | MIUI | ✔️ Opening |
+| Redmi 13C | air | 2023-12-29 | MIUI | ✔️ Opening |
+| Redmi 14R | flame | 2024-09-18 | Xiaomi HyperOS | ❓ Unknown |
+| Redmi Note 11R | light | 2022-09-29 | MIUI | ✔️ Opening |
+| Redmi Note 11E | light | 2022-03-01 | MIUI | ✔️ Opening |
+| Redmi Note 11E Pro | veux | 2022-03-01 | MIUI | ✔️ Opening |
+| Redmi Note 11 | evergo | 2021-10-28 | MIUI | ✔️ Opening |
+| Redmi Note 11 Pro | pissarro | 2021-10-28 | MIUI | ✔️ Opening |
+| Redmi Note 11 Pro+ | pissarro | 2021-10-28 | MIUI | ✔️ Opening |
+| Redmi Note 11T Pro | xaga | 2022-05-24 | MIUI | ✔️ Opening |
+| Redmi Note 11T Pro+ | xaga | 2022-05-24 | MIUI | ✔️ Opening |
+| Redmi Note 12 | sunstone | 2022-10-27 | MIUI | ✔️ Opening |
+| Redmi Note 12R Pro | sunstone | 2023-04-27 | MIUI | ✔️ Opening |
+| Redmi Note 12 Pro | ruby | 2022-10-27 | MIUI | ✔️ Opening |
+| Redmi Note 12 Pro+ | ruby | 2022-10-27 | MIUI | ✔️ Opening |
+| Redmi Note 12 Pro Speed | redwood | 2022-12-27 | MIUI | ✔️ Opening |
+| Redmi Note 12 Turbo | marble | 2023-03-28 | MIUI | ✔️ Opening |
+| Redmi Note 12T Pro | pearl | 2023-05-30 | MIUI | ✔️ Opening |
+| Redmi Note 13R | breeze | 2024-05-30 | Xiaomi HyperOS | ❌ Blocked |
+| Redmi Note 13 | gold | 2023-09-21 | MIUI | ⚠️ Unsupported |
+| Redmi Note 13R Pro | gold | 2023-11-20 | MIUI | ⚠️ Unsupported |
+| Redmi Note 13 Pro | garnet | 2023-09-21 | MIUI | ⚠️ Unsupported |
+| Redmi Note 13 Pro+ | zircon | 2023-09-21 | MIUI | ⚠️ Unsupported |
+| Redmi Turbo 3 | peridot | 2024-04-10 | Xiaomi HyperOS | ❌ Blocked |
+| Redmi Note 14 | beryl | 2024-09-26 | Xiaomi HyperOS | ❓ Unknown |
+| Redmi Note 14 Pro | malachite | 2024-09-26 | Xiaomi HyperOS | ❓ Unknown |
+| Redmi Note 14 Pro+ | amethyst | 2024-09-26 | Xiaomi HyperOS | ❌ Blocked |
+| Redmi K40 Gaming | ares | 2021-04-27 | MIUI | ✔️ Opening |
+| Redmi K40 | alioth | 2021-02-25 | MIUI | ✔️ Opening |
+| Redmi K40S | munch | 2022-03-17 | MIUI | ✔️ Opening |
+| Redmi K40 Pro | haydn | 2021-02-25 | MIUI | ✔️ Opening |
+| Redmi K40 Pro+ | haydn | 2021-02-25 | MIUI | ✔️ Opening |
+| Redmi K50 Gaming | ingres | 2022-02-16 | MIUI | ✔️ Opening |
+| Redmi K50 | rubens | 2022-03-17 | MIUI | ✔️ Opening |
+| Redmi K50 Pro | matisse | 2022-03-17 | MIUI | ✔️ Opening |
+| Redmi K50 Ultra | diting | 2022-08-11 | MIUI | ✔️ Opening |
+| Redmi K60E | rembrandt | 2022-12-27 | MIUI | ✔️ Opening |
+| Redmi K60 | mondrian | 2022-12-27 | MIUI | ✔️ Opening |
+| Redmi K60 Pro | socrates | 2022-12-27 | MIUI | ✔️ Opening |
+| Redmi K60 Ultra | corot | 2023-08-14 | MIUI | ✔️ Opening |
+| Redmi K70E | duchamp | 2023-11-29 | Xiaomi HyperOS | ❌ Blocked |
+| Redmi K70 | vermeer | 2023-11-29 | Xiaomi HyperOS | ❌ Blocked |
+| Redmi K70 Pro | manet | 2023-11-29 | Xiaomi HyperOS | ❌ Blocked |
+| Redmi K70 Ultra | rothko | 2024-07-19 | Xiaomi HyperOS | ❌ Blocked |
+| Redmi Pad SE | xun | 2023-09-21 | MIUI Pad | ✔️ Opening |
+| Redmi Pad | yunluo | 2022-10-27 | MIUI Pad | ✔️ Opening |
+| Redmi Pad Pro | dizi | 2024-04-10 | Xiaomi HyperOS | ❌ Blocked |
+| Redmi Pad Pro 5G | ruan | 2024-04-10 | Xiaomi HyperOS | ❌ Blocked |
+
+```
